@@ -14,7 +14,7 @@ pages_build_output_dir = "public"
 [[d1_databases]]
 binding = "DB"
 database_name = "calendar-db"
-database_id = "REPLACE_WITH_DATABASE_ID"
+database_id = "e5d18701-8319-4a8a-a544-b83acbb2bda0"
 
 # ---------------------------------------------------------------------------
 # 环境变量 / 密钥说明（不要在此文件写入真实值）

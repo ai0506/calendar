@@ -62,3 +62,6 @@
 [ClaudeCode][260710142851] file updated
 [ClaudeCode][260710142854] Committed and pushed Stage 6 (7243959) to origin/main. Created DEPLOY_CHECKLIST.md (Cloudflare production deployment checklist only, no resources created, no deployment executed).
 [ClaudeCode][260710142858] file updated
+[ClaudeCode][260710144858] file updated
+[ClaudeCode][260710144940] Cloudflare production D1 setup: authenticated via wrangler login (benjaminai0506@outlook.com), created production D1 database calendar-db (id e5d18701-8319-4a8a-a544-b83acbb2bda0), updated wrangler.toml database_id, applied migrations/0001_init.sql to --remote (8 commands, verified events/categories tables + 8 seed categories present, events table empty). No deployment executed, no application code changed.
+[ClaudeCode][260710144950] file updated

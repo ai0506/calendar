@@ -4,36 +4,108 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AI0506 Calendar</title>
-  <style>
-    :root { color-scheme: light dark; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      background: #0f172a;
-      color: #e2e8f0;
-    }
-    .card {
-      text-align: center;
-      padding: 2rem 2.5rem;
-      border-radius: 12px;
-      background: #1e293b;
-      box-shadow: 0 8px 30px rgba(0,0,0,.3);
-      max-width: 90vw;
-    }
-    h1 { margin: 0 0 .5rem; font-size: 1.5rem; }
-    p { margin: .25rem 0; color: #94a3b8; }
-    code { color: #7dd3fc; }
-  </style>
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div class="card">
-    <h1>AI0506 Calendar</h1>
-    <p>私人日历系统 · Phase 1 脚手架</p>
-    <p>日历界面（Vanilla JS + FullCalendar）将在后续阶段构建。</p>
-    <p>API 基础路径：<code>/api</code></p>
+  <div class="topbar" id="topbar" aria-hidden="true">
+    <div class="brand"><span class="dot"></span>AI0506 Calendar</div>
+    <div class="nav-center">
+      <button class="nav-arrow" type="button" data-action="navigate" data-dir="-1" aria-label="Previous">‹</button>
+      <div class="nav-title" id="navTitle">Calendar</div>
+      <button class="nav-arrow" type="button" data-action="navigate" data-dir="1" aria-label="Next">›</button>
+      <button class="today-pill" type="button" data-action="today">Today</button>
+    </div>
+    <div class="nav-right">
+      <div class="view-toggle" id="viewToggle" role="tablist" aria-label="Calendar view">
+        <button type="button" data-view="month" class="active">Month</button>
+        <button type="button" data-view="week">Week</button>
+        <button type="button" data-view="day">Day</button>
+      </div>
+      <button class="add-btn" type="button" data-action="open-event">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="add-label">New Event</span>
+      </button>
+    </div>
   </div>
+
+  <main class="body-split" id="bodySplit" aria-hidden="true">
+    <div class="cal-col" id="calCol"></div>
+    <aside class="inspector" id="inspector"></aside>
+  </main>
+
+  <div class="auth-screen" id="authScreen">
+    <form class="login-card" id="loginForm">
+      <div class="login-mark"></div>
+      <h1>AI0506 Calendar</h1>
+      <p>Enter your private calendar password.</p>
+      <label for="passwordInput">Password</label>
+      <input id="passwordInput" type="password" autocomplete="current-password" required />
+      <div class="field-error login-error" id="loginError">Invalid password.</div>
+      <button class="btn-create login-button" id="loginButton" type="submit">Sign In</button>
+    </form>
+  </div>
+
+  <div class="loading-screen" id="loadingScreen">
+    <div class="loading-card">
+      <div class="spinner"></div>
+      <span>Loading calendar</span>
+    </div>
+  </div>
+
+  <div class="scrim" id="eventScrim">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="eventModalTitle">
+      <h2 id="eventModalTitle">New Event</h2>
+      <form id="eventForm">
+        <div class="field">
+          <label for="fTitle">Title</label>
+          <input type="text" id="fTitle" placeholder="e.g. Mechanics past paper" required />
+        </div>
+        <div class="field">
+          <label>Category</label>
+          <div class="cat-swatches" id="catSwatches"></div>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label for="fDate">Date</label>
+            <input type="date" id="fDate" required />
+          </div>
+        </div>
+        <div class="all-day-toggle">
+          <input type="checkbox" id="fAllday" />
+          <label for="fAllday">All-day</label>
+        </div>
+        <div class="row2" id="timeFields">
+          <div class="field">
+            <label for="fStart">Start</label>
+            <input type="time" id="fStart" value="09:00" />
+          </div>
+          <div class="field">
+            <label for="fEnd">End</label>
+            <input type="time" id="fEnd" value="10:00" />
+          </div>
+        </div>
+        <div class="field-error" id="timeError">End time must be after start time.</div>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel" data-action="close-event">Cancel</button>
+          <button type="submit" class="btn-create" id="createButton">Create Event</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="scrim" id="confirmScrim">
+    <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+      <h2 id="deleteModalTitle">Delete Event</h2>
+      <p class="confirm-text">Are you sure you want to delete <b id="confirmTitle"></b>? This can't be undone.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" data-action="close-confirm">Cancel</button>
+        <button type="button" class="btn-delete" id="confirmDeleteButton">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="/app.js" defer></script>
 </body>
 </html>

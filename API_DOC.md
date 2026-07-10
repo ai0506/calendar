@@ -1,6 +1,6 @@
 # AI0506 Calendar — API 文档 (API_DOC)
 
-> 状态：**Phase 1 实现中。** 认证与 events CRUD 已实现（Stage 4–5）；import / categories / export 仍为设计草案，标注见各节。
+> 状态：**Phase 1 后端基础已完成。** 认证、events CRUD、批量导入、分类、导出均已实现（Stage 4–6）。
 
 ## 通用约定
 
@@ -97,62 +97,88 @@ Phase 1 使用单一 `API_TOKEN`（环境变量）。
 
 ---
 
-### 批量导入 (Import)
+### 批量导入 (Import) — ✅ 已实现 (Stage 6)
 
 #### `POST /api/events/import`
-供 AI Agent / 导入工具批量创建，**幂等**：按 `(source, external_id)` 去重，防止重复创建。
+供 AI Agent / CSV 导入工具 / Android App / 外部程序批量创建，**幂等**：按 `(source, external_id)` 去重，防止重复创建。
+`source` 为每条事件的字段（未提供则默认 `"web"`），不是请求体顶层字段。
+
 请求：
 ```json
 {
-  "source": "agent",
   "events": [
     {
-      "external_id": "summer-2026-phys-01",
       "title": "Physics Session",
       "start_time": "2026-07-14T19:00:00+08:00",
       "end_time": "2026-07-14T21:00:00+08:00",
-      "category": "Physics"
+      "category": "Physics",
+      "source": "agent",
+      "external_id": "summer-2026-phys-01"
     }
   ]
 }
 ```
-- `external_id` 已存在（同 `source`）→ 更新该事件（或跳过，见 `mode`，Phase 1 默认更新）。
-- `external_id` 不存在 → 新建。
+- 同 `(source, external_id)` 已存在 → **更新**该事件（title / description / 时间 / category / color / group_title，`updated_at` 刷新）。
+- 不存在（或未提供 `external_id`）→ **新建**。
+- 单条事件缺少必填字段（`title` / `start_time`）→ 计入 `skipped`，不中断整批。
 
-返回统计：
+响应：
 ```json
 { "ok": true, "data": { "created": 1, "updated": 0, "skipped": 0 } }
 ```
 
+**去重验证示例**：连续两次导入同一个 `(source="agent", external_id="summer-2026-phys-01")`，第一次 `created:1`，第二次 `created:0, updated:1`，数据库中仅保留一行。
+
 ---
 
-### 分类 (Categories)
+### 分类 (Categories) — ✅ 已实现 (Stage 6)
 
 #### `GET /api/categories`
-返回全部分类（含种子的 8 个）：
+返回全部分类，按 `sort_order` 升序、再按 `name` 升序（含种子的 8 个）：
 ```json
-{ "ok": true, "data": [ { "id": "...", "name": "Physics", "color": "#3b82f6", "sort_order": 4 } ] }
+{
+  "ok": true,
+  "data": [
+    { "id": "cat-physics", "name": "Physics", "color": "#0891b2", "sort_order": 4, "created_at": "2026-07-10T00:00:00+08:00" }
+  ]
+}
 ```
 
 #### `POST /api/categories`
-创建分类：
+创建分类。`id` / `created_at` 由服务器生成；`name` / `color` 必填，`sort_order` 可选（默认 `0`）。
+请求：
 ```json
 { "name": "Chemistry", "color": "#10b981", "sort_order": 9 }
 ```
-名称重复返回 `409`。
+成功：`201`，返回创建的分类对象。
+名称重复：`409`，`{ "ok": false, "error": { "code": "conflict", "message": "..." } }`。
 
 ---
 
-### 导出 (Export)
+### 导出 (Export) — ✅ 已实现 (Stage 6)
 
 #### `GET /api/export?format=json|csv|md`
 | format | Content-Type | 用途 |
 |--------|--------------|------|
-| `json` | `application/json` | 程序处理 |
-| `csv` | `text/csv` | Excel |
-| `md` | `text/markdown` | 发送给 ChatGPT / Claude 分析 |
+| `json` | `application/json; charset=utf-8` | 程序处理 / 未来 Agent |
+| `csv` | `text/csv; charset=utf-8` | Excel |
+| `md` | `text/markdown; charset=utf-8` | 发送给 ChatGPT / Claude 分析 / 人工阅读 |
 
-导出全部未软删除事件。
+导出全部未软删除事件（`deleted_at IS NULL`），按 `start_time` 升序。`format` 缺省时默认 `json`；无效 format 返回 `400`。
+
+**json**：`{ "ok": true, "data": [ { /* event */ } ] }`（字段同 events API）。
+
+**csv**：表头 `id,title,description,start_time,end_time,all_day,category,color,group_title,source,external_id`；含逗号/引号/换行的字段自动加引号转义。
+
+**md** 示例：
+```markdown
+# Calendar
+
+## 2026-07-14
+
+- 19:00 Physics revision [Physics]
+```
+按日期分组（`## YYYY-MM-DD`），组内按时间排序；全天事件显示 `All day`；分类以 `[Category]` 附在标题后（无分类则省略）。
 
 ---
 

@@ -47,3 +47,5 @@
 [ClaudeCode][260710140451] file updated
 [ClaudeCode][260710141241] Local CRUD test of Stage 5 events API completed via wrangler --local (npm install, db:local migration, pages dev). All 8 scenarios passed: auth middleware, bearer token access, POST/GET/PUT/DELETE, soft-delete persistence, timezone-offset preservation. No code bugs found; code unchanged.
 [ClaudeCode][260710141247] file updated
+[ClaudeCode][260710141810] Connected local project to GitHub repo https://github.com/ai0506/calendar. git init, verified .dev.vars/.env/node_modules/.wrangler are gitignored, staged tracked project files, created initial commit 6b07cfc "Initial AI0506 Calendar backend foundation", added remote origin, renamed branch to main, pushed to origin/main.
+[ClaudeCode][260710141821] file updated

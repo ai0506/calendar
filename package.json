@@ -1,0 +1,16 @@
+{
+  "name": "ai0506-calendar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI0506 Calendar — 私人日历系统 (Cloudflare Pages + Functions + D1)",
+  "scripts": {
+    "dev": "wrangler pages dev",
+    "db:local": "wrangler d1 migrations apply calendar-db --local",
+    "db:remote": "wrangler d1 migrations apply calendar-db --remote",
+    "db:create": "wrangler d1 create calendar-db",
+    "deploy": "wrangler pages deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3"
+  }
+}

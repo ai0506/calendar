@@ -1,0 +1,101 @@
+// /api/events
+//   GET  列出事件（支持 from / to / category 过滤，默认排除软删除）
+//   POST 创建事件（服务器生成 id / created_at / updated_at）
+
+import { queryAll, run } from "../../_lib/db.js";
+import { ok, error } from "../../_lib/response.js";
+import {
+  validateEventInput,
+  rowToEvent,
+  nowIso,
+  toIntBool,
+} from "../../_lib/events.js";
+
+// GET /api/events?from=&to=&category=
+export async function onRequestGet(context) {
+  const { request, env } = context;
+  const url = new URL(request.url);
+  const from = url.searchParams.get("from");
+  const to = url.searchParams.get("to");
+  const category = url.searchParams.get("category");
+
+  let sql = "SELECT * FROM events WHERE deleted_at IS NULL";
+  const params = [];
+
+  // 供 FullCalendar 月/周/日视图按范围加载
+  if (from) {
+    sql += " AND start_time >= ?";
+    params.push(from);
+  }
+  if (to) {
+    sql += " AND start_time <= ?";
+    params.push(to);
+  }
+  if (category) {
+    sql += " AND category = ?";
+    params.push(category);
+  }
+  sql += " ORDER BY start_time ASC";
+
+  const rows = await queryAll(env.DB, sql, params);
+  return ok(rows.map(rowToEvent));
+}
+
+// POST /api/events
+export async function onRequestPost(context) {
+  const { request, env } = context;
+
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return error("validation_error", "Request body must be a JSON object", 400);
+  }
+
+  const msg = validateEventInput(body, true);
+  if (msg) return error("validation_error", msg, 400);
+
+  const id = crypto.randomUUID();
+  const now = nowIso();
+
+  const event = {
+    id,
+    title: body.title,
+    description: body.description ?? null,
+    start_time: body.start_time, // 原样保留客户端时区偏移
+    end_time: body.end_time ?? null,
+    all_day: toIntBool(body.all_day),
+    category: body.category ?? null,
+    color: body.color ?? null,
+    group_title: body.group_title ?? null,
+    source: body.source ?? "web",
+    external_id: body.external_id ?? null,
+    created_at: now,
+    updated_at: now,
+    deleted_at: null,
+  };
+
+  await run(
+    env.DB,
+    `INSERT INTO events
+       (id, title, description, start_time, end_time, all_day, category, color,
+        group_title, source, external_id, created_at, updated_at, deleted_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      event.id,
+      event.title,
+      event.description,
+      event.start_time,
+      event.end_time,
+      event.all_day,
+      event.category,
+      event.color,
+      event.group_title,
+      event.source,
+      event.external_id,
+      event.created_at,
+      event.updated_at,
+      event.deleted_at,
+    ],
+  );
+
+  return ok(rowToEvent(event), 201);
+}

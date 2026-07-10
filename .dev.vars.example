@@ -1,0 +1,12 @@
+# 本地开发环境变量示例
+# 复制为 .dev.vars 并填入真实值。.dev.vars 已被 .gitignore 忽略，切勿提交。
+# 生产环境请在 Cloudflare Pages 项目设置 -> 环境变量 中配置同名变量。
+
+# 私人登录密码（浏览器登录用）
+PASSWORD="change-me"
+
+# App / AI Agent 访问令牌（Phase 1 单一 token）
+API_TOKEN="change-me-long-random-token"
+
+# Cookie 签名密钥（HMAC，用足够长的随机串）
+SESSION_SECRET="change-me-long-random-secret"

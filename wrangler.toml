@@ -1,0 +1,26 @@
+name = "ai0506-calendar"
+compatibility_date = "2026-01-01"
+
+# Cloudflare Pages: 静态资源目录（前端页面 + 占位）
+pages_build_output_dir = "public"
+
+# ---------------------------------------------------------------------------
+# D1 数据库绑定
+# 运行时通过 env.DB 访问。
+# database_id 需在创建数据库后填入：
+#   wrangler d1 create calendar-db
+# 然后把输出的 database_id 粘贴到下方。
+# ---------------------------------------------------------------------------
+[[d1_databases]]
+binding = "DB"
+database_name = "calendar-db"
+database_id = "REPLACE_WITH_DATABASE_ID"
+
+# ---------------------------------------------------------------------------
+# 环境变量 / 密钥说明（不要在此文件写入真实值）
+#   PASSWORD         私人登录密码
+#   API_TOKEN        App / AI Agent 访问令牌（Phase 1 单一 token）
+#   SESSION_SECRET   Cookie 签名密钥
+# 本地：放入 .dev.vars（已 gitignore）
+# 生产：Cloudflare Pages 项目设置 -> 环境变量
+# ---------------------------------------------------------------------------

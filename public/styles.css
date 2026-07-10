@@ -20,6 +20,7 @@ body{
   display:flex;
   flex-direction:column;
   height:100vh;
+  height:100dvh;
   overflow:hidden;
 }
 body:not(.is-authenticated) .topbar,
@@ -244,6 +245,29 @@ body.is-portrait .inspector{
 .pd-dow{ display:inline-block; min-width:2.8em; }
 .pd-title{ font-size:21px; font-weight:600; letter-spacing:0; }
 .pd-count{ font-size:12px; color:var(--muted); white-space:nowrap; }
+
+@media (max-height: 760px){
+  body.is-portrait .topbar{ height:54px; }
+  body.is-portrait .cal-col{ padding:7px 10px 6px; }
+  body.is-portrait .inspector{ padding-top:12px; }
+  .pm-weekrow{ margin-bottom:2px; }
+  .pm-cell{ min-height:38px; padding:3px 2px 2px; gap:1px; border-radius:9px; }
+  .pm-date{ width:22px; height:22px; font-size:12.5px; }
+  .pd-head{ padding:0 16px; margin-bottom:10px; }
+  .pd-title{ font-size:19px; }
+  .pd-scroll{ padding:0 16px 14px; }
+  .inspector-add{ padding:9px 0; margin-bottom:12px; }
+  .agenda-list{ gap:7px; }
+  .agenda-item{ padding:9px 10px; }
+}
+
+@media (max-height: 680px){
+  body.is-portrait .topbar{ height:52px; }
+  .pm-cell{ min-height:34px; }
+  .pm-date{ width:21px; height:21px; font-size:12px; }
+  .pm-dot{ width:4px; height:4px; }
+  .pd-head{ margin-bottom:8px; }
+}
 
 .scrim{
   position:fixed; inset:0; background:rgba(0,0,0,0.4);

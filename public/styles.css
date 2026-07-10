@@ -117,8 +117,11 @@ body:not(.is-authenticated) .body-split{ visibility:hidden; }
 .inspector-sub{ font-size:12.5px; color:var(--muted); margin-bottom:18px; }
 .inspector-add{
   display:flex; align-items:center; justify-content:center; gap:6px;
+  width:100%;
+  background:transparent;
   border:1.5px dashed var(--hairline); border-radius:12px; padding:10px 0;
   font-size:12.5px; font-weight:500; color:var(--muted); cursor:pointer; margin-bottom:18px;
+  font-family:inherit;
   transition:background .15s ease, border-color .15s ease, color .15s ease;
 }
 .inspector-add:hover{ background:var(--soft); border-color:var(--accent); color:var(--accent); }
@@ -224,6 +227,7 @@ body.is-portrait .inspector{
 .pm-grid{ display:grid; grid-template-columns:repeat(7,1fr); gap:2px; }
 .pm-cell{
   display:flex; flex-direction:column; align-items:center; gap:3px;
+  border:none; background:transparent; font-family:inherit; color:inherit;
   min-height:46px; padding:5px 2px 4px; border-radius:11px; cursor:pointer;
   transition:background .12s ease;
 }

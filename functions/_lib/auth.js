@@ -60,21 +60,28 @@ function getCookie(request, name) {
 //   exp = 过期时间（unix 秒）
 //   sig = HMAC_SHA256("v1.<exp>", SESSION_SECRET)
 
+function isLocalhostRequest(request) {
+  const hostname = new URL(request.url).hostname;
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
 /** 生成 Set-Cookie 头字符串（登录成功时使用） */
-export async function createSessionCookie(secret) {
+export async function createSessionCookie(secret, request) {
   const exp = Math.floor(Date.now() / 1000) + COOKIE_MAX_AGE;
   const payload = `v1.${exp}`;
   const sig = await hmac(payload, secret);
   const value = `${payload}.${sig}`;
+  const secure = request && isLocalhostRequest(request) ? "" : " Secure;";
   return (
-    `${COOKIE_NAME}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; ` +
+    `${COOKIE_NAME}=${value}; Path=/; HttpOnly;${secure} SameSite=Lax; ` +
     `Max-Age=${COOKIE_MAX_AGE}`
   );
 }
 
 /** 清除会话 Cookie（登出时使用） */
-export function clearSessionCookie() {
-  return `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+export function clearSessionCookie(request) {
+  const secure = request && isLocalhostRequest(request) ? "" : " Secure;";
+  return `${COOKIE_NAME}=; Path=/; HttpOnly;${secure} SameSite=Lax; Max-Age=0`;
 }
 
 /** 校验请求携带的会话 Cookie 是否有效 */

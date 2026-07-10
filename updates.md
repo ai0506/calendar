@@ -65,3 +65,4 @@
 [ClaudeCode][260710144858] file updated
 [ClaudeCode][260710144940] Cloudflare production D1 setup: authenticated via wrangler login (benjaminai0506@outlook.com), created production D1 database calendar-db (id e5d18701-8319-4a8a-a544-b83acbb2bda0), updated wrangler.toml database_id, applied migrations/0001_init.sql to --remote (8 commands, verified events/categories tables + 8 seed categories present, events table empty). No deployment executed, no application code changed.
 [ClaudeCode][260710144950] file updated
+[Codex][260710153137] Phase 1 closeout: fixed localhost session cookie handling while preserving Secure cookies for production domains; updated BUGS.md and TEST_CHECKLIST.md with current backend test status and documented import re-run after soft-delete external_id issue without changing schema.

@@ -18,6 +18,6 @@ export async function onRequestPost(context) {
     return error("invalid_password", "Invalid password", 401);
   }
 
-  const cookie = await createSessionCookie(env.SESSION_SECRET);
+  const cookie = await createSessionCookie(env.SESSION_SECRET, request);
   return ok({ authenticated: true }, 200, { "Set-Cookie": cookie });
 }

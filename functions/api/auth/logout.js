@@ -4,8 +4,8 @@
 import { clearSessionCookie } from "../../_lib/auth.js";
 import { ok } from "../../_lib/response.js";
 
-export async function onRequestPost() {
+export async function onRequestPost(context) {
   return ok({ authenticated: false }, 200, {
-    "Set-Cookie": clearSessionCookie(),
+    "Set-Cookie": clearSessionCookie(context.request),
   });
 }

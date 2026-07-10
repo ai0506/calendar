@@ -23,7 +23,7 @@ body{
   overflow:hidden;
 }
 body:not(.is-authenticated) .topbar,
-body:not(.is-authenticated) .body-split{ visibility:hidden; }
+body:not(.is-authenticated) .body-split{ display:none; }
 
 .topbar{
   height:60px; flex-shrink:0;
@@ -318,7 +318,11 @@ body.is-portrait .inspector{
   background:rgba(255,255,255,.92);
   backdrop-filter:blur(18px);
 }
-.auth-screen{ opacity:0; pointer-events:none; transition:opacity .18s ease; }
+.auth-screen{
+  background:var(--ground);
+  backdrop-filter:none;
+  opacity:0; pointer-events:none; transition:opacity .18s ease;
+}
 .auth-screen.open{ opacity:1; pointer-events:auto; }
 .loading-screen{ z-index:140; }
 .loading-screen.hidden{ display:none; }

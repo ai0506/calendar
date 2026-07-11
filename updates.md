@@ -189,3 +189,6 @@
 [ClaudeCode][260711203755] file updated
 [ClaudeCode][260711204044] file updated
 [ClaudeCode][260711204054] fix: add CJK fonts (PingFang SC/Microsoft YaHei/Noto Sans CJK etc.) to body font-family stack in styles.css to fix Chinese tofu-box rendering
+[Codex][260711205208] 修复事件分类改为新分类时颜色未同步：PUT 和批量导入在未显式提供 color 时自动使用分类颜色，同时保留显式自定义颜色。
+[Codex][260711205427] 支持事件颜色填写 default：渲染时使用所属分类颜色，批量导入将 default 归一为跟随分类颜色，并保留自定义颜色。
+[Codex][260711205434] 加强 default 颜色值的前端类型判断，避免异常数据导致渲染报错。

@@ -39,6 +39,14 @@ export async function onRequestPost(context) {
     const source = item.source ?? "web";
     const externalId = item.external_id ?? null;
     const now = nowIso();
+    let eventColor = item.color ?? null;
+    if (typeof eventColor === "string" && eventColor.toLowerCase() === "default") {
+      eventColor = null;
+    }
+    if (item.category && item.color === undefined) {
+      const category = await queryOne(env.DB, "SELECT color FROM categories WHERE name = ?", [item.category]);
+      eventColor = category?.color ?? null;
+    }
 
     // 无 external_id 时无法去重判定，直接作为新事件插入。
     let existing = null;
@@ -64,7 +72,7 @@ export async function onRequestPost(context) {
           item.end_time ?? null,
           toIntBool(item.all_day),
           item.category ?? null,
-          item.color ?? null,
+          eventColor,
           item.group_title ?? null,
           now,
           existing.id,
@@ -87,7 +95,7 @@ export async function onRequestPost(context) {
           item.end_time ?? null,
           toIntBool(item.all_day),
           item.category ?? null,
-          item.color ?? null,
+          eventColor,
           item.group_title ?? null,
           source,
           externalId,

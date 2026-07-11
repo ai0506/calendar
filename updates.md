@@ -170,6 +170,7 @@
 [Codex][260711201134] Fixed the calendar skill PowerShell wrapper to send the Accept value through request headers for Windows PowerShell compatibility.
 [Codex][260711201134] Configured the calendar skill to read CALENDAR_API_TOKEN from the user-local C:\Users\asw\.codex\calendar.env file and removed reliance on the system environment variable.
 [Codex][260711201134] Documented recurring-series split usage, one-off exception usage, weekday numbering, confirmation requirements, and the current exception API limitation in the calendar skill.
+[Codex][260711201134] Enforced UTF-8 handling for calendar writes: PowerShell now sends explicit UTF-8 JSON bytes with charset=utf-8, and the skill requires read-back verification for Chinese text.
 [ClaudeCode][260711190526] file updated
 [ClaudeCode][260711190537] file updated
 [ClaudeCode][260711190541] file updated
@@ -192,3 +193,25 @@
 [Codex][260711205208] 修复事件分类改为新分类时颜色未同步：PUT 和批量导入在未显式提供 color 时自动使用分类颜色，同时保留显式自定义颜色。
 [Codex][260711205427] 支持事件颜色填写 default：渲染时使用所属分类颜色，批量导入将 default 归一为跟随分类颜色，并保留自定义颜色。
 [Codex][260711205434] 加强 default 颜色值的前端类型判断，避免异常数据导致渲染报错。
+[ClaudeCode][260711224046] file updated
+[ClaudeCode][260711224054] 新增 functions/mcp/index.js：最小版 MCP Streamable HTTP 端点，实现 initialize/tools/list/tools/call，仅暴露只读工具 list_events，无认证（阶段1）
+[ClaudeCode][260711224449] file updated
+[ClaudeCode][260711224458] file updated
+[ClaudeCode][260711224504] file updated
+[ClaudeCode][260711224609] MCP阶段2：新增工具 list_categories(公开)、create_event/update_event/delete_event(需 Bearer MCP_WRITE_TOKEN，fail-closed)，镜像现有REST逻辑含分类颜色继承；.dev.vars(.example) 增加 MCP_WRITE_TOKEN；未改动现有REST API
+[ClaudeCode][260711225216] file updated
+[ClaudeCode][260711225247] file updated
+[ClaudeCode][260711225254] file updated
+[ClaudeCode][260711225302] file updated
+[ClaudeCode][260711225318] file updated
+[ClaudeCode][260711225403] file updated
+[ClaudeCode][260711225431] file updated
+[ClaudeCode][260711225505] file updated
+[ClaudeCode][260711225518] file updated
+[ClaudeCode][260711225525] file updated
+[ClaudeCode][260711225531] file updated
+[ClaudeCode][260711225639] file updated
+[ClaudeCode][260711225815] file updated
+[ClaudeCode][260711225823] 实现完整 OAuth 2.1+PKCE 让 /mcp 可作 Claude Custom Connector：新增 _lib/oauth.js、.well-known/oauth-{protected-resource,authorization-server}.js、oauth/{register,authorize,token}.js、migration 0006_oauth.sql（clients/codes/refresh_tokens）；/mcp 改为统一要求有效 OAuth access token(aud 绑定)，MCP_WRITE_TOKEN 降级为本地调试旁路；严格校验 redirect_uri/state/PKCE/code 单次使用与过期/token 过期与 audience；新增 MCP_DEPLOY.md；本地 30 项端到端测试全部通过，REST API 不受影响
+[ClaudeCode][260711230534] file updated
+[ClaudeCode][260711230743] 部署 MCP OAuth 到生产：远程 D1 应用 0005+0006 迁移(建 oauth_clients/codes/refresh_tokens)；修正 wrangler.toml 项目名 ai0506-calendar→calendar；wrangler pages deploy 到 calendar 项目 main 分支；线上验证 .well-known 两个元数据、/mcp 未认证 401、DCR 注册、授权页渲染、token 端点(SESSION_SECRET 已配置)均正常；清理探测数据

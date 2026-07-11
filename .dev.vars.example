@@ -10,3 +10,7 @@ API_TOKEN="change-me-long-random-token"
 
 # Cookie 签名密钥（HMAC，用足够长的随机串）
 SESSION_SECRET="change-me-long-random-secret"
+
+# MCP 写入工具令牌（create/update/delete_event 需要）
+# MCP 客户端在请求头携带 Authorization: Bearer <此值>。用足够长的随机串。
+MCP_WRITE_TOKEN="change-me-long-random-mcp-token"

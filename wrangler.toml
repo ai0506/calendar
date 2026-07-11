@@ -1,4 +1,4 @@
-name = "ai0506-calendar"
+name = "calendar"
 compatibility_date = "2026-01-01"
 
 # Cloudflare Pages: 静态资源目录（前端页面 + 占位）

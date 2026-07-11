@@ -16,7 +16,7 @@
 // 本端点不在 /api/* 下，_middleware.js 不拦截，不影响现有 REST API 认证。
 // 复用 _lib/ 的 db / events / auth / oauth 逻辑，不修改现有 REST API。
 
-import { queryAll, queryOne, run } from "../_lib/db.js";
+import { queryAll, queryOne, run, batch } from "../_lib/db.js";
 import { safeEqual } from "../_lib/auth.js";
 import {
   verifyAccessToken,
@@ -32,6 +32,17 @@ import {
   nowIso,
   toIntBool,
 } from "../_lib/events.js";
+import {
+  generateInstances,
+  validateRecurringRequest,
+  rowToSeries,
+  seriesRowToRequest,
+} from "../_lib/recurrence.js";
+import {
+  seriesFromRequest,
+  insertSeriesStatement,
+  insertInstanceStatement,
+} from "../_lib/series.js";
 
 // 与客户端协商的协议版本。若客户端请求了具体版本则回显，否则用此默认值。
 const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
@@ -135,6 +146,78 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: { id: { type: "string", description: "事件 id" } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "create_event_series",
+    description:
+      "【需写权限】创建一个重复事件系列，并生成全部实例。用于“每天/每周/每月/每年重复”的日程。" +
+      "必须提供 end_date 或 occurrence_count 之一来界定范围（最多 366 个实例）。" +
+      "weekly 频率必须提供 weekdays（0=周日…6=周六）。",
+    annotations: { readOnlyHint: false },
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...EVENT_WRITE_PROPERTIES,
+        frequency: { type: "string", enum: ["daily", "weekly", "monthly", "yearly"], description: "重复频率" },
+        weekdays: {
+          type: "array",
+          items: { type: "integer", minimum: 0, maximum: 6 },
+          description: "weekly 时必填：星期几重复，0=周日,1=周一,…,6=周六。如周二四六=[2,4,6]",
+        },
+        start_date: { type: "string", description: "起始日期 YYYY-MM-DD（可选，默认取 start_time 的日期）" },
+        end_date: { type: "string", description: "结束日期 YYYY-MM-DD（含当天）。与 occurrence_count 二选一" },
+        occurrence_count: { type: "integer", description: "重复次数（正整数，≤366）。与 end_date 二选一" },
+      },
+      required: ["title", "start_time", "frequency"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_event_series",
+    description: "【只读】获取指定 id 的重复系列：规则、当前未删除实例、以及已登记的跳过项(exceptions)。",
+    annotations: { readOnlyHint: true },
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string", description: "系列 id（series_id）" } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "update_event_series",
+    description:
+      "【需写权限】修改整个重复系列的规则（仅传要改的字段）。会按新规则重新生成全部实例，" +
+      "之前对单个实例的单独修改不会保留；仍符合新规则的跳过项(exceptions)会保留。",
+    annotations: { readOnlyHint: false },
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "系列 id（series_id）" },
+        ...EVENT_WRITE_PROPERTIES,
+        frequency: { type: "string", enum: ["daily", "weekly", "monthly", "yearly"], description: "重复频率" },
+        weekdays: {
+          type: "array",
+          items: { type: "integer", minimum: 0, maximum: 6 },
+          description: "weekly 时的星期几，0=周日…6=周六",
+        },
+        start_date: { type: "string", description: "起始日期 YYYY-MM-DD" },
+        end_date: { type: "string", description: "结束日期 YYYY-MM-DD" },
+        occurrence_count: { type: "integer", description: "重复次数（≤366）" },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "delete_event_series",
+    description: "【需写权限】软删除整个重复系列及其全部未删除实例。若只想删一次，改用 delete_event。",
+    annotations: { readOnlyHint: false, destructiveHint: true },
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string", description: "系列 id（series_id）" } },
       required: ["id"],
       additionalProperties: false,
     },
@@ -275,6 +358,181 @@ async function runDeleteEvent(env, args = {}) {
   return { id, deleted: true };
 }
 
+// --- 重复系列工具（镜像 /api/event-series 逻辑）---------------------------
+
+async function getActiveSeries(env, id) {
+  return queryOne(env.DB, "SELECT * FROM event_series WHERE id = ? AND deleted_at IS NULL", [id]);
+}
+
+// 从友好的工具参数构造 recurrence 请求体，并补齐派生字段（start_date / monthly_*）。
+function buildRecurrenceBody(args) {
+  const startTime = args.start_time;
+  if (typeof startTime !== "string" || startTime.length < 10) throw new Error("start_time is required");
+  const start_date = args.start_date || startTime.slice(0, 10);
+  const body = {
+    title: args.title,
+    description: args.description ?? null,
+    start_time: startTime,
+    end_time: args.end_time ?? null,
+    all_day: args.all_day,
+    category: args.category ?? null,
+    color: args.color ?? null,
+    group_title: args.group_title ?? null,
+    frequency: args.frequency,
+    interval: 1,
+    weekdays: args.weekdays,
+    start_date,
+    end_date: args.end_date ?? null,
+    occurrence_count: args.occurrence_count ?? null,
+    idempotency_key: crypto.randomUUID(),
+  };
+  if (body.frequency === "monthly") {
+    body.monthly_mode = "day-of-month";
+    body.monthly_day = Number(start_date.slice(8, 10));
+  } else {
+    body.monthly_mode = null;
+    body.monthly_day = null;
+  }
+  return body;
+}
+
+// 对应 POST /api/event-series
+async function runCreateEventSeries(env, args = {}) {
+  const body = buildRecurrenceBody(args);
+  const eventMessage = validateEventInput(body, true);
+  if (eventMessage) throw new Error(eventMessage);
+  const recurrenceMessage = validateRecurringRequest(body);
+  if (recurrenceMessage) throw new Error(recurrenceMessage);
+
+  let instances;
+  try {
+    instances = generateInstances(body);
+  } catch (err) {
+    throw new Error(err.message || "Invalid recurrence rule");
+  }
+
+  const seriesId = crypto.randomUUID();
+  const now = nowIso();
+  const series = seriesFromRequest({ ...body, all_day: toIntBool(body.all_day) }, seriesId, body.idempotency_key, now);
+  const statements = [insertSeriesStatement(env.DB, series)];
+  instances.forEach((instance, index) => statements.push(insertInstanceStatement(env.DB, series, instance, index)));
+  await batch(env.DB, statements);
+  return { series_id: seriesId, created_count: instances.length };
+}
+
+// 对应 GET /api/event-series/:id
+async function runGetEventSeries(env, args = {}) {
+  const { id } = args;
+  if (typeof id !== "string" || id === "") throw new Error("id is required");
+  const series = await getActiveSeries(env, id);
+  if (!series) throw new Error("Event series not found");
+  const events = await queryAll(
+    env.DB,
+    "SELECT * FROM events WHERE series_id = ? AND deleted_at IS NULL ORDER BY start_time ASC",
+    [id],
+  );
+  const exceptions = await queryAll(
+    env.DB,
+    "SELECT * FROM event_exceptions WHERE series_id = ? ORDER BY original_start_time ASC",
+    [id],
+  );
+  return { series: rowToSeries(series), events: events.map(rowToEvent), exceptions };
+}
+
+// 对应 PATCH /api/event-series/:id（MCP 版：每次调用为独立操作，不走 event_operations 幂等表）
+const SERIES_PATCH_FIELDS = [
+  "title", "description", "category", "color", "group_title", "all_day",
+  "start_time", "end_time", "frequency", "weekdays", "start_date",
+  "end_date", "occurrence_count",
+];
+
+async function runUpdateEventSeries(env, args = {}) {
+  const { id } = args;
+  if (typeof id !== "string" || id === "") throw new Error("id is required");
+  const series = await getActiveSeries(env, id);
+  if (!series) throw new Error("Event series not found");
+
+  const merged = seriesRowToRequest(series);
+  for (const field of SERIES_PATCH_FIELDS) {
+    if (args[field] !== undefined) merged[field] = args[field];
+  }
+  if (args.start_time !== undefined && args.start_date === undefined) {
+    merged.start_date = String(merged.start_time).slice(0, 10);
+  }
+  merged.interval = 1;
+  if (merged.frequency === "monthly") {
+    merged.monthly_mode = "day-of-month";
+    merged.monthly_day = Number(String(merged.start_date).slice(8, 10));
+  } else {
+    merged.monthly_mode = null;
+    merged.monthly_day = null;
+  }
+  merged.idempotency_key = crypto.randomUUID();
+
+  const eventMessage = validateEventInput(merged, true);
+  if (eventMessage) throw new Error(eventMessage);
+  const recurrenceMessage = validateRecurringRequest(merged);
+  if (recurrenceMessage) throw new Error(recurrenceMessage);
+
+  let instances;
+  try {
+    instances = generateInstances(merged);
+  } catch (err) {
+    throw new Error(err.message || "Invalid recurrence rule");
+  }
+
+  const exceptions = await queryAll(env.DB, "SELECT * FROM event_exceptions WHERE series_id = ?", [id]);
+  const occurrenceSet = new Set(instances.map((i) => i.start_time));
+  const validExceptionSet = new Set(
+    exceptions.filter((e) => occurrenceSet.has(e.original_start_time)).map((e) => e.original_start_time),
+  );
+  const invalidExceptions = exceptions.filter((e) => !occurrenceSet.has(e.original_start_time));
+
+  const now = nowIso();
+  const updatedSeries = seriesFromRequest(merged, id, series.idempotency_key, now);
+  updatedSeries.created_at = series.created_at;
+
+  const statements = [
+    env.DB.prepare(
+      `UPDATE event_series SET title=?, description=?, category=?, color=?, group_title=?, all_day=?,
+        start_time=?, end_time=?, frequency=?, interval=?, weekdays=?, monthly_mode=?, monthly_day=?,
+        start_date=?, end_date=?, occurrence_count=?, updated_at=? WHERE id=? AND deleted_at IS NULL`,
+    ).bind(
+      updatedSeries.title, updatedSeries.description, updatedSeries.category, updatedSeries.color,
+      updatedSeries.group_title, updatedSeries.all_day, updatedSeries.start_time, updatedSeries.end_time,
+      updatedSeries.frequency, updatedSeries.interval, updatedSeries.weekdays, updatedSeries.monthly_mode,
+      updatedSeries.monthly_day, updatedSeries.start_date, updatedSeries.end_date,
+      updatedSeries.occurrence_count, now, id,
+    ),
+    env.DB.prepare("UPDATE events SET deleted_at=?, updated_at=? WHERE series_id=? AND deleted_at IS NULL").bind(now, now, id),
+  ];
+  invalidExceptions.forEach((e) => {
+    statements.push(env.DB.prepare("DELETE FROM event_exceptions WHERE id=? AND series_id=?").bind(e.id, id));
+  });
+  instances.forEach((instance, index) => {
+    if (!validExceptionSet.has(instance.start_time)) {
+      statements.push(insertInstanceStatement(env.DB, updatedSeries, instance, index, now));
+    }
+  });
+
+  await batch(env.DB, statements);
+  return { series_id: id, updated: true, created_count: instances.length };
+}
+
+// 对应 DELETE /api/event-series/:id
+async function runDeleteEventSeries(env, args = {}) {
+  const { id } = args;
+  if (typeof id !== "string" || id === "") throw new Error("id is required");
+  const series = await getActiveSeries(env, id);
+  if (!series) throw new Error("Event series not found");
+  const now = nowIso();
+  await batch(env.DB, [
+    env.DB.prepare("UPDATE event_series SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL").bind(now, now, id),
+    env.DB.prepare("UPDATE events SET deleted_at=?, updated_at=? WHERE series_id=? AND deleted_at IS NULL").bind(now, now, id),
+  ]);
+  return { id, deleted: true };
+}
+
 // --- 鉴权 -----------------------------------------------------------------
 
 function extractBearer(request) {
@@ -327,6 +585,10 @@ async function callTool(env, name, args) {
     case "create_event": return runCreateEvent(env, args);
     case "update_event": return runUpdateEvent(env, args);
     case "delete_event": return runDeleteEvent(env, args);
+    case "create_event_series": return runCreateEventSeries(env, args);
+    case "get_event_series": return runGetEventSeries(env, args);
+    case "update_event_series": return runUpdateEventSeries(env, args);
+    case "delete_event_series": return runDeleteEventSeries(env, args);
     default: throw new Error(`未知工具：${name}`);
   }
 }

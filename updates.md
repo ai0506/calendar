@@ -215,3 +215,10 @@
 [ClaudeCode][260711225823] 实现完整 OAuth 2.1+PKCE 让 /mcp 可作 Claude Custom Connector：新增 _lib/oauth.js、.well-known/oauth-{protected-resource,authorization-server}.js、oauth/{register,authorize,token}.js、migration 0006_oauth.sql（clients/codes/refresh_tokens）；/mcp 改为统一要求有效 OAuth access token(aud 绑定)，MCP_WRITE_TOKEN 降级为本地调试旁路；严格校验 redirect_uri/state/PKCE/code 单次使用与过期/token 过期与 audience；新增 MCP_DEPLOY.md；本地 30 项端到端测试全部通过，REST API 不受影响
 [ClaudeCode][260711230534] file updated
 [ClaudeCode][260711230743] 部署 MCP OAuth 到生产：远程 D1 应用 0005+0006 迁移(建 oauth_clients/codes/refresh_tokens)；修正 wrangler.toml 项目名 ai0506-calendar→calendar；wrangler pages deploy 到 calendar 项目 main 分支；线上验证 .well-known 两个元数据、/mcp 未认证 401、DCR 注册、授权页渲染、token 端点(SESSION_SECRET 已配置)均正常；清理探测数据
+[ClaudeCode][260711232215] file updated
+[ClaudeCode][260711232225] file updated
+[ClaudeCode][260711232248] file updated
+[ClaudeCode][260711232321] file updated
+[ClaudeCode][260711232327] file updated
+[ClaudeCode][260711232356] file updated
+[ClaudeCode][260711232430] MCP 新增重复事件工具 create/get/update/delete_event_series（复用 recurrence.js/series.js，支持 daily/weekly/monthly/yearly，自动派生 start_date 与 monthly_day，MCP 层自动生成 idempotency_key）；工具增至 9 个；refresh token 有效期 30 天→1 年（轮换重置，保持使用即永不重新授权）；本地 21 项测试全通过

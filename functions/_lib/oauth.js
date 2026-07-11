@@ -14,7 +14,9 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 export const ACCESS_TOKEN_TTL = 3600;             // access token 有效期（秒）：1 小时
-export const REFRESH_TOKEN_TTL = 30 * 24 * 3600;  // refresh token 有效期（秒）：30 天
+export const REFRESH_TOKEN_TTL = 365 * 24 * 3600; // refresh token 有效期（秒）：1 年
+// 说明：refresh token 每次使用都会轮换并重置有效期，只要连接器保持使用即“永不过期”；
+// 设为 1 年是为了即便长期不用也不至于掉线（需要重新授权）。
 export const CODE_TTL = 300;                       // 授权码有效期（秒）：5 分钟
 export const DEFAULT_SCOPE = "calendar";           // 唯一 scope，允许调用全部工具
 export const USER_SUB = "owner";                   // 单用户

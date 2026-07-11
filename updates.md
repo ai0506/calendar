@@ -1,4 +1,5 @@
 [ClaudeCode][260710091625] file updated
+[Codex][260712002611] Fixed MCP and REST recurring-series partial-update merging by sharing a stored-row merge helper; omitted fields now retain category, color, metadata, and recurrence values, null remains an explicit clear, malformed weekdays JSON is safe, and MCP series updates now validate temporal ordering. Added regression tests and checklist coverage.
 [ClaudeCode][260710091858] file updated
 [ClaudeCode][260710091906] file updated
 [ClaudeCode][260710091917] file updated
@@ -234,3 +235,7 @@
 [ClaudeCode][260711233345] file updated
 [ClaudeCode][260711233418] file updated
 [ClaudeCode][260711233456] MCP 新增 skip_occurrence/restore_occurrence/split_series（复用 exceptions/split 逻辑，split 跳过 event_operations 幂等表），工具增至 12；工具描述优先推荐 skip/split 而非整体改/删；颜色支持 "default"（跟随分类色）：create/update event 与 series 均解析，字段说明已更新；本地 22 项测试全通过
+[Codex][260712000944] Added production/DEADLINES_PLAN.md defining the first-version single Deadline model, shared categories with events, database migration, REST API, frontend rendering, validation rules, implementation phases, and explicit non-goals for recurring deadlines.
+[Codex][260712001807] Revised production/DEADLINES_PLAN.md after compatibility review: fixed date-based deadline range queries and Asia/Shanghai all-day semantics, added explicit Pages Functions routes and idempotent state-transition rules, preserved legacy exports, closed external_id conflict behavior, aligned frontend caching/rendering with the custom app, and deferred import/MCP extensions.
+[Codex][260712002343] Refined the Deadline implementation plan with target-state conditional UPDATE SQL for complete/reopen, frontend render-time status recomputation, julianday-based timezone-aware ordering, strict calendar/date-time validation, explicit include_completed parsing, completed-overdue semantics, a matching due-date expression index, and complete project documentation sync requirements.
+[Codex][260712002714] Corrected the Deadline plan's frontend DTO to retain completedAt, made the D1 expression index a required migration assumption with an explicit success test, normalized blank external IDs to NULL, and clarified that deleted is internal-only and never exposed by list/detail APIs.

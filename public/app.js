@@ -24,6 +24,8 @@ let clockTimer = null;
 let refreshInFlight = false;
 let lastRangeKey = "";
 let pendingDelete = null;
+let repeatIdempotencyKey = null;
+let repeatWeekdayTouched = false;
 let toastTimer = null;
 
 const els = {};
@@ -64,9 +66,22 @@ function cacheElements() {
     timeFields: document.getElementById("timeFields"),
     timeError: document.getElementById("timeError"),
     catSwatches: document.getElementById("catSwatches"),
+    fRepeat: document.getElementById("fRepeat"),
+    repeatPanel: document.getElementById("repeatPanel"),
+    repeatWeeklyFields: document.getElementById("repeatWeeklyFields"),
+    repeatWeekdays: document.getElementById("repeatWeekdays"),
+    repeatRuleNote: document.getElementById("repeatRuleNote"),
+    fRepeatEnd: document.getElementById("fRepeatEnd"),
+    fRepeatEndDate: document.getElementById("fRepeatEndDate"),
+    fRepeatCount: document.getElementById("fRepeatCount"),
+    repeatPreview: document.getElementById("repeatPreview"),
+    repeatError: document.getElementById("repeatError"),
     confirmScrim: document.getElementById("confirmScrim"),
     confirmTitle: document.getElementById("confirmTitle"),
     confirmDeleteButton: document.getElementById("confirmDeleteButton"),
+    seriesDeleteActions: document.getElementById("seriesDeleteActions"),
+    deleteThisButton: document.getElementById("deleteThisButton"),
+    deleteSeriesButton: document.getElementById("deleteSeriesButton"),
     toast: document.getElementById("toast"),
   });
 }
@@ -78,7 +93,9 @@ function bindEvents() {
   document.querySelector("[data-action='open-event']").addEventListener("click", () => openModal());
   document.querySelector("[data-action='close-event']").addEventListener("click", closeModal);
   document.querySelector("[data-action='close-confirm']").addEventListener("click", closeConfirm);
-  els.confirmDeleteButton.addEventListener("click", confirmDelete);
+  els.confirmDeleteButton.addEventListener("click", () => confirmDelete("event"));
+  els.deleteThisButton.addEventListener("click", () => confirmDelete("event"));
+  els.deleteSeriesButton.addEventListener("click", () => confirmDelete("series"));
 
   els.viewToggle.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-view]");
@@ -90,6 +107,18 @@ function bindEvents() {
   els.fAllday.addEventListener("change", toggleAllDayFields);
   els.fStart.addEventListener("input", validateTimes);
   els.fEnd.addEventListener("input", validateTimes);
+  els.fRepeat.addEventListener("change", () => syncRepeatUI(true));
+  els.fRepeatEnd.addEventListener("change", syncRepeatUI);
+  els.fDate.addEventListener("input", () => {
+    if (els.fRepeat.value === "weekly" && !repeatWeekdayTouched) setDefaultRepeatWeekday();
+    syncRepeatUI();
+  });
+  els.fRepeatEndDate.addEventListener("input", syncRepeatUI);
+  els.fRepeatCount.addEventListener("input", syncRepeatUI);
+  els.repeatWeekdays.addEventListener("change", () => {
+    repeatWeekdayTouched = true;
+    syncRepeatUI();
+  });
 
   els.eventScrim.addEventListener("click", (event) => {
     if (event.target === els.eventScrim) closeModal();
@@ -288,6 +317,7 @@ function adaptEvent(row) {
     allDay: Boolean(row.all_day),
     dateKey,
     source: row.source || "web",
+    seriesId: row.series_id || null,
   };
 }
 
@@ -454,7 +484,7 @@ function renderMonth() {
         <button type="button" class="cell-add" data-open-date="${iso}">+</button>
       </div>
       <div class="events">
-        ${shown.map((event) => `<div class="event-chip ${isOngoing(event, date) ? "ongoing" : ""}" style="background:${event.bg}; color:${event.color}">${escapeHtml(event.title)}</div>`).join("")}
+        ${shown.map((event) => `<div class="event-chip ${isOngoing(event, date) ? "ongoing" : ""}" style="background:${event.bg}; color:${event.color}">${eventTitleHTML(event)}</div>`).join("")}
         ${more > 0 ? `<div class="more-link">+${more} more</div>` : ""}
       </div>
     </div>`;
@@ -503,7 +533,7 @@ function bindInspectorActions(root) {
   root.querySelectorAll("[data-delete-id]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      requestDeleteEvent(button.dataset.deleteId, button.dataset.deleteTitle);
+      requestDeleteEvent(button.dataset.deleteId, button.dataset.deleteTitle, button.dataset.seriesId);
     });
   });
   root.querySelectorAll("[data-category]").forEach((item) => {
@@ -562,8 +592,8 @@ function buildAllDayRowHTML(days) {
     const events = getEventsFor(date).filter(isAllDayEvent);
     return `<div class="allday-cell">${events.map((event) => `
       <div class="allday-chip" style="background:${event.bg};color:${event.color}">
-        <span class="t">${escapeHtml(event.title)}</span>
-        <button type="button" class="allday-delete" data-delete-id="${event.id}" data-delete-title="${escapeAttr(event.title)}">x</button>
+        <span class="t">${eventTitleHTML(event)}</span>
+        <button type="button" class="allday-delete" data-delete-id="${event.id}" data-delete-title="${escapeAttr(event.title)}" data-series-id="${escapeAttr(event.seriesId || "")}">x</button>
       </div>`).join("")}</div>`;
   }).join("");
   return `<div class="allday-row" style="grid-template-columns:52px repeat(${days.length},1fr)">
@@ -586,8 +616,8 @@ function buildTimeGridHTML(days) {
       const widthPct = 100 / event.cols;
       const leftPct = event.col * widthPct;
       return `<div class="tl-event ${isOngoing(event, date) ? "ongoing" : ""}" style="top:${top}px;height:${height}px;left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);background:${event.bg};color:${event.color}">
-        <span class="t">${escapeHtml(event.title)}</span><span class="tm">${event.start} - ${event.end}${isOngoing(event, date) ? '<span class="now-badge">Now</span>' : ""}</span>
-        <button type="button" class="tl-delete" data-delete-id="${event.id}" data-delete-title="${escapeAttr(event.title)}">x</button>
+        <span class="t">${eventTitleHTML(event)}</span><span class="tm">${event.start} - ${event.end}${isOngoing(event, date) ? '<span class="now-badge">Now</span>' : ""}</span>
+        <button type="button" class="tl-delete" data-delete-id="${event.id}" data-delete-title="${escapeAttr(event.title)}" data-series-id="${escapeAttr(event.seriesId || "")}">x</button>
       </div>`;
     }).join("");
     const nowLine = sameDay(date, today()) && now >= GRID_START_HOUR * 60 && now <= GRID_END_HOUR * 60
@@ -610,7 +640,7 @@ function bindTimelineDeletes() {
   els.calCol.querySelectorAll("[data-delete-id]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      requestDeleteEvent(button.dataset.deleteId, button.dataset.deleteTitle);
+      requestDeleteEvent(button.dataset.deleteId, button.dataset.deleteTitle, button.dataset.seriesId);
     });
   });
 }
@@ -619,12 +649,19 @@ function agendaItemHTML(event, date) {
   return `<div class="agenda-item">
     <div class="agenda-bar" style="background:${event.color}"></div>
     <div class="agenda-body">
-      <div class="agenda-title">${escapeHtml(event.title)}</div>
+      <div class="agenda-title">${eventTitleHTML(event)}</div>
       <div class="agenda-time">${isAllDayEvent(event) ? "All-day" : `${event.start} - ${event.end}`}${isOngoing(event, date) ? '<span class="now-badge">Now</span>' : ""}</div>
       <span class="agenda-cat" style="color:${event.color}">${escapeHtml(event.cat)}</span>
     </div>
-    <button type="button" class="agenda-delete" data-delete-id="${event.id}" data-delete-title="${escapeAttr(event.title)}">x</button>
+    <button type="button" class="agenda-delete" data-delete-id="${event.id}" data-delete-title="${escapeAttr(event.title)}" data-series-id="${escapeAttr(event.seriesId || "")}">x</button>
   </div>`;
+}
+
+function eventTitleHTML(event) {
+  const marker = event.seriesId
+    ? '<span class="repeat-mark" title="Repeating event" aria-label="Repeating event">↻</span>'
+    : "";
+  return `${escapeHtml(event.title)}${marker}`;
 }
 
 function layoutDayEvents(events) {
@@ -679,10 +716,18 @@ function openModal(prefillIso) {
   els.fAllday.checked = false;
   els.fStart.value = "09:00";
   els.fEnd.value = "10:00";
+  els.fRepeat.value = "none";
+  els.fRepeatEnd.value = "date";
+  els.fRepeatEndDate.value = addDateKey(els.fDate.value, 30);
+  els.fRepeatCount.value = "10";
+  repeatIdempotencyKey = crypto.randomUUID();
+  repeatWeekdayTouched = false;
+  setDefaultRepeatWeekday();
   if (!selectedCat || !getCategory(selectedCat)) selectedCat = categories[0]?.name || FALLBACK_CATEGORY.name;
   toggleAllDayFields();
   hideTimeError();
   renderSwatches();
+  syncRepeatUI();
   els.createButton.disabled = false;
   els.eventScrim.classList.add("open");
   setTimeout(() => els.fTitle.focus(), 100);
@@ -698,6 +743,11 @@ async function submitEvent(event) {
   const date = els.fDate.value;
   const title = els.fTitle.value.trim();
   if (!title) return;
+  const repeat = getRepeatConfig();
+  if (repeat.error) {
+    showRepeatError(repeat.error);
+    return;
+  }
   const allDay = els.fAllday.checked;
   const category = getCategory(selectedCat);
   const start = allDay ? "00:00" : (els.fStart.value || "09:00");
@@ -712,13 +762,29 @@ async function submitEvent(event) {
     source: "web",
   };
 
+  const requestPayload = repeat.value ? {
+    ...payload,
+    frequency: repeat.value.frequency,
+    interval: 1,
+    weekdays: repeat.value.weekdays,
+    monthly_mode: repeat.value.frequency === "monthly" ? "day-of-month" : null,
+    monthly_day: repeat.value.frequency === "monthly" ? Number(date.slice(8, 10)) : null,
+    start_date: date,
+    end_date: repeat.value.end_date,
+    occurrence_count: repeat.value.occurrence_count,
+    idempotency_key: repeatIdempotencyKey,
+  } : payload;
+
   els.createButton.disabled = true;
   try {
-    await apiFetch("/api/events", { method: "POST", body: JSON.stringify(payload) });
+    const response = await apiFetch(repeat.value ? "/api/event-series" : "/api/events", {
+      method: "POST",
+      body: JSON.stringify(requestPayload),
+    });
     selectedDate = parseDateKey(date);
     viewDate = parseDateKey(date);
     closeModal();
-    showToast("Event created");
+    showToast(repeat.value ? `Created ${response.data?.created_count || repeat.value.previewCount} events` : "Event created");
     await refreshVisibleData({ silent: false, force: true });
   } catch (err) {
     showToast(err.message || "Failed to create event.");
@@ -727,10 +793,14 @@ async function submitEvent(event) {
   }
 }
 
-function requestDeleteEvent(id, title) {
-  pendingDelete = { id };
+function requestDeleteEvent(id, title, seriesId = "") {
+  pendingDelete = { id, seriesId: seriesId || null };
   els.confirmTitle.textContent = title || "this event";
   els.confirmDeleteButton.disabled = false;
+  els.seriesDeleteActions.hidden = !pendingDelete.seriesId;
+  els.confirmDeleteButton.hidden = Boolean(pendingDelete.seriesId);
+  els.deleteThisButton.disabled = false;
+  els.deleteSeriesButton.disabled = false;
   els.confirmScrim.classList.add("open");
 }
 
@@ -739,18 +809,22 @@ function closeConfirm() {
   pendingDelete = null;
 }
 
-async function confirmDelete() {
+async function confirmDelete(scope = "event") {
   if (!pendingDelete) return;
-  els.confirmDeleteButton.disabled = true;
+  const button = scope === "series" ? els.deleteSeriesButton : scope === "event" && pendingDelete.seriesId ? els.deleteThisButton : els.confirmDeleteButton;
+  button.disabled = true;
   try {
-    await apiFetch(`/api/events/${encodeURIComponent(pendingDelete.id)}`, { method: "DELETE" });
+    const url = scope === "series"
+      ? `/api/event-series/${encodeURIComponent(pendingDelete.seriesId)}`
+      : `/api/events/${encodeURIComponent(pendingDelete.id)}`;
+    await apiFetch(url, { method: "DELETE" });
     closeConfirm();
-    showToast("Event deleted");
+    showToast(scope === "series" ? "Series deleted" : "Event deleted");
     await refreshVisibleData({ silent: false, force: true });
   } catch (err) {
     showToast(err.message || "Failed to delete event.");
   } finally {
-    els.confirmDeleteButton.disabled = false;
+    button.disabled = false;
   }
 }
 
@@ -784,6 +858,159 @@ function showTimeError() {
 function hideTimeError() {
   els.timeError.classList.remove("show");
   els.fEnd.style.borderColor = "";
+}
+
+function syncRepeatUI(resetWeekday = false) {
+  const frequency = els.fRepeat.value;
+  const enabled = frequency !== "none";
+  els.repeatPanel.hidden = !enabled;
+  els.repeatWeeklyFields.hidden = frequency !== "weekly";
+  els.fRepeatEndDate.hidden = els.fRepeatEnd.value !== "date";
+  els.fRepeatCount.hidden = els.fRepeatEnd.value !== "count";
+
+  if (resetWeekday && frequency === "weekly") {
+    repeatWeekdayTouched = false;
+    setDefaultRepeatWeekday();
+  }
+
+  if (frequency === "monthly") {
+    els.repeatRuleNote.textContent = "Repeats on this date; unavailable month dates are skipped.";
+  } else if (frequency === "yearly") {
+    els.repeatRuleNote.textContent = "Feb 29 is skipped in non-leap years.";
+  } else {
+    els.repeatRuleNote.textContent = "";
+  }
+
+  if (!enabled) {
+    els.createButton.textContent = "Create Event";
+    hideRepeatError();
+    els.repeatPreview.textContent = "";
+    return;
+  }
+
+  const repeat = getRepeatConfig();
+  if (repeat.error) {
+    showRepeatError(repeat.error);
+    els.repeatPreview.textContent = "";
+    els.createButton.textContent = "Create Events";
+  } else {
+    hideRepeatError();
+    els.repeatPreview.textContent = `${repeatDescription(repeat.value)} · Will create ${repeat.value.previewCount} events`;
+    els.createButton.textContent = `Create ${repeat.value.previewCount} Events`;
+  }
+}
+
+function setDefaultRepeatWeekday() {
+  const weekday = weekdayOfDateKey(els.fDate.value);
+  els.repeatWeekdays.querySelectorAll("input").forEach((input) => {
+    input.checked = Number(input.value) === weekday;
+  });
+}
+
+function getRepeatConfig() {
+  const frequency = els.fRepeat.value;
+  if (frequency === "none") return { value: null, error: null };
+
+  const endDate = els.fRepeatEnd.value === "date" ? els.fRepeatEndDate.value : null;
+  const occurrenceCount = els.fRepeatEnd.value === "count" ? Number(els.fRepeatCount.value) : null;
+  if (endDate && compareDateKeys(endDate, els.fDate.value) < 0) {
+    return { value: null, error: "End date must be on or after the start date." };
+  }
+  if (els.fRepeatEnd.value === "date" && !isValidDateKey(els.fRepeatEndDate.value)) {
+    return { value: null, error: "Choose an end date." };
+  }
+  if (els.fRepeatEnd.value === "count" && (!Number.isInteger(occurrenceCount) || occurrenceCount < 1 || occurrenceCount > 366)) {
+    return { value: null, error: "Occurrences must be between 1 and 366." };
+  }
+
+  const weekdays = frequency === "weekly"
+    ? [...els.repeatWeekdays.querySelectorAll("input:checked")].map((input) => Number(input.value))
+    : null;
+  if (frequency === "weekly" && (!weekdays || weekdays.length === 0)) {
+    return { value: null, error: "Choose at least one weekday." };
+  }
+
+  const previewCount = calculateRepeatPreview({
+    frequency,
+    startDate: els.fDate.value,
+    weekdays,
+    endDate,
+    occurrenceCount,
+  });
+  if (previewCount.error) return { value: null, error: previewCount.error };
+  return {
+    value: { frequency, weekdays, end_date: endDate, occurrence_count: occurrenceCount, previewCount: previewCount.count },
+    error: null,
+  };
+}
+
+function showRepeatError(message) {
+  els.repeatError.textContent = message;
+  els.repeatError.classList.add("show");
+}
+
+function hideRepeatError() {
+  els.repeatError.textContent = "";
+  els.repeatError.classList.remove("show");
+}
+
+function repeatDescription(value) {
+  const labels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  if (value.frequency === "daily") return value.end_date ? `Every day until ${value.end_date}` : `Every day, ${value.occurrence_count} times`;
+  if (value.frequency === "weekly") {
+    const days = value.weekdays.map((day) => labels[day]).join(", ");
+    return value.end_date ? `Every ${days} until ${value.end_date}` : `Every ${days}, ${value.occurrence_count} times`;
+  }
+  if (value.frequency === "monthly") return value.end_date ? `Every month on day ${Number(els.fDate.value.slice(8, 10))} until ${value.end_date}` : `Every month, ${value.occurrence_count} times`;
+  return value.end_date ? `Every year on ${els.fDate.value.slice(5)} until ${value.end_date}` : `Every year, ${value.occurrence_count} times`;
+}
+
+function calculateRepeatPreview({ frequency, startDate, weekdays, endDate, occurrenceCount }) {
+  let count = 0;
+  let candidates = 0;
+  let cursor = startDate;
+  const addCandidate = (candidate, eligible = true) => {
+    candidates += 1;
+    if (candidates > 10000) return { error: "This rule spans too many calendar periods." };
+    if (eligible && (!endDate || compareDateKeys(candidate, endDate) <= 0)) count += 1;
+    return null;
+  };
+
+  while (candidates <= 10000) {
+    let done = false;
+    if (frequency === "daily") {
+      const error = addCandidate(cursor);
+      if (error) return error;
+      done = endDate ? cursor === endDate : false;
+      cursor = addDateKey(cursor, 1);
+    } else if (frequency === "weekly") {
+      const error = addCandidate(cursor, weekdays.includes(weekdayOfDateKey(cursor)));
+      if (error) return error;
+      done = endDate ? cursor === endDate : false;
+      cursor = addDateKey(cursor, 1);
+    } else if (frequency === "monthly") {
+      const parts = parseDateKeyParts(startDate);
+      const offset = candidates;
+      const month = addMonthParts(parts.year, parts.month, offset);
+      const day = parts.day <= daysInMonthKey(month.year, month.month) ? parts.day : null;
+      const candidate = day ? formatDateKey(month.year, month.month, day) : null;
+      const error = addCandidate(candidate || formatDateKey(month.year, month.month, 1), Boolean(candidate));
+      if (error) return error;
+      done = endDate && compareDateKeys(formatDateKey(month.year, month.month, daysInMonthKey(month.year, month.month)), endDate) >= 0;
+    } else {
+      const parts = parseDateKeyParts(startDate);
+      const year = parts.year + candidates;
+      const candidate = parts.day <= daysInMonthKey(year, parts.month) ? formatDateKey(year, parts.month, parts.day) : null;
+      const error = addCandidate(candidate || formatDateKey(year, parts.month, 1), Boolean(candidate));
+      if (error) return error;
+      done = endDate && compareDateKeys(formatDateKey(year, parts.month, daysInMonthKey(year, parts.month)), endDate) >= 0;
+    }
+    if (count > 366) return { error: "A maximum of 366 events is allowed." };
+    if ((occurrenceCount && count >= occurrenceCount) || done) break;
+  }
+
+  if (count === 0) return { error: "This rule produces no events." };
+  return { count };
 }
 
 function getEventsFor(date) {
@@ -837,6 +1064,66 @@ function isoKey(date) {
 function parseDateKey(iso) {
   const [year, month, day] = iso.split("-").map(Number);
   return new Date(year, month - 1, day);
+}
+
+function parseDateKeyParts(value) {
+  return { year: Number(value.slice(0, 4)), month: Number(value.slice(5, 7)), day: Number(value.slice(8, 10)) };
+}
+
+function formatDateKey(year, month, day) {
+  return `${String(year).padStart(4, "0")}-${pad2(month)}-${pad2(day)}`;
+}
+
+function isLeapYearKey(year) {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+function daysInMonthKey(year, month) {
+  if (month === 2) return isLeapYearKey(year) ? 29 : 28;
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
+function isValidDateKey(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return false;
+  const parts = parseDateKeyParts(value);
+  return parts.year >= 1 && parts.month >= 1 && parts.month <= 12 && parts.day >= 1 && parts.day <= daysInMonthKey(parts.year, parts.month);
+}
+
+function compareDateKeys(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function addDateKey(value, amount) {
+  let { year, month, day } = parseDateKeyParts(value);
+  let remaining = Math.abs(amount);
+  const direction = amount >= 0 ? 1 : -1;
+  while (remaining > 0) {
+    day += direction;
+    if (direction > 0 && day > daysInMonthKey(year, month)) {
+      day = 1;
+      month += 1;
+      if (month > 12) { month = 1; year += 1; }
+    } else if (direction < 0 && day < 1) {
+      month -= 1;
+      if (month < 1) { month = 12; year -= 1; }
+      day = daysInMonthKey(year, month);
+    }
+    remaining -= 1;
+  }
+  return formatDateKey(year, month, day);
+}
+
+function addMonthParts(year, month, amount) {
+  const total = year * 12 + month - 1 + amount;
+  return { year: Math.floor(total / 12), month: (total % 12) + 1 };
+}
+
+function weekdayOfDateKey(value) {
+  const { year: originalYear, month, day } = parseDateKeyParts(value);
+  let year = originalYear;
+  const table = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+  if (month < 3) year -= 1;
+  return (year + Math.floor(year / 4) - Math.floor(year / 100) + Math.floor(year / 400) + table[month - 1] + day) % 7;
 }
 
 function sameDay(a, b) {

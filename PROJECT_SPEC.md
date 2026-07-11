@@ -50,6 +50,7 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 - 事件分类系统（颜色）
 - 数据云端同步（D1）
 - API（获取 / 创建 / 修改 / 删除 / 批量导入 / 导出）
+- 重复事件系列（规则创建、实例查询、单次/系列软删除）
 - 基础项目文档
 
 优先级：**稳定 > 简洁 > 易维护 > 可扩展**。不为未来功能过度设计。
@@ -72,12 +73,16 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 | group_title | TEXT | 分组标题（未来合并显示课程用） |
 | source | TEXT | 来源，默认 `web`（`web` / `agent` / `import` 等） |
 | external_id | TEXT | 外部唯一标识，用于导入去重 |
+| series_id | TEXT | 所属重复事件系列；普通事件为 NULL |
+| recurrence_index | INTEGER | 系列实例序号；首版预留，不参与业务计算 |
+| original_start_time | TEXT | 实例原始开始时间；首版预留，不参与业务计算 |
 | created_at | TEXT | 创建时间 |
 | updated_at | TEXT | 更新时间 |
 | deleted_at | TEXT | 软删除时间戳，NULL 表示未删除 |
 
 索引：
 - `start_time`（日历视图范围查询）
+- `series_id`（系列查询和系列软删除）
 - **唯一** `(source, external_id)`（`external_id` 非空时）→ 保证 Agent 批量导入幂等，防止重复创建。
 
 ### categories
@@ -90,6 +95,10 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 | created_at | TEXT | 创建时间 |
 
 种子分类：School / Research / Math / Physics / Computer Science / Project / Personal / Other，各配不同颜色。分类系统保持简单，方便以后扩展。
+
+### event_series
+
+重复规则保存在 `event_series`，实际显示的每次事件仍保存在 `events`，通过 `events.series_id` 关联。首版支持 daily / weekly / monthly / yearly，最大 366 个实例；系列创建使用幂等键和 D1 原子批次。
 
 ### 未来表（本阶段不创建）
 - `day_marks`（Days Matter 倒计时）

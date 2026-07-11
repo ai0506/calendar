@@ -10,6 +10,7 @@
 - Android / Flutter App
 
 ### 已完成
+- 重复事件系列首版：规则创建、实例生成、幂等提交、系列查询、单次/系列软删除，以及 New Event Modal 内的 Repeat 配置。
 - 项目文档初始化：PROJECT_SPEC / API_DOC / BUGS / CHANGELOG / TEST_CHECKLIST / updates
 - Stage 2：项目脚手架（wrangler.toml / package.json / .gitignore / .dev.vars.example / public/index.html）
 - Stage 3：数据库迁移 `migrations/0001_init.sql`（events / categories 表 + 索引 + 默认分类）

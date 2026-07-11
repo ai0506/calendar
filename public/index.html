@@ -53,38 +53,80 @@
   </div>
 
   <div class="scrim" id="eventScrim">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="eventModalTitle">
+    <div class="modal event-modal" role="dialog" aria-modal="true" aria-labelledby="eventModalTitle">
       <h2 id="eventModalTitle">New Event</h2>
       <form id="eventForm">
-        <div class="field">
-          <label for="fTitle">Title</label>
-          <input type="text" id="fTitle" placeholder="e.g. Mechanics past paper" required />
-        </div>
-        <div class="field">
-          <label>Category</label>
-          <div class="cat-swatches" id="catSwatches"></div>
-        </div>
-        <div class="row2">
+        <div class="event-form-body">
           <div class="field">
-            <label for="fDate">Date</label>
-            <input type="date" id="fDate" required />
-          </div>
-        </div>
-        <div class="all-day-toggle">
-          <input type="checkbox" id="fAllday" />
-          <label for="fAllday">All-day</label>
-        </div>
-        <div class="row2" id="timeFields">
-          <div class="field">
-            <label for="fStart">Start</label>
-            <input type="time" id="fStart" value="09:00" />
+            <label for="fTitle">Title</label>
+            <input type="text" id="fTitle" placeholder="e.g. Mechanics past paper" required />
           </div>
           <div class="field">
-            <label for="fEnd">End</label>
-            <input type="time" id="fEnd" value="10:00" />
+            <label>Category</label>
+            <div class="cat-swatches" id="catSwatches"></div>
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label for="fDate">Date</label>
+              <input type="date" id="fDate" required />
+            </div>
+          </div>
+          <div class="all-day-toggle">
+            <input type="checkbox" id="fAllday" />
+            <label for="fAllday">All-day</label>
+          </div>
+          <div class="row2" id="timeFields">
+            <div class="field">
+              <label for="fStart">Start</label>
+              <input type="time" id="fStart" value="09:00" />
+            </div>
+            <div class="field">
+              <label for="fEnd">End</label>
+              <input type="time" id="fEnd" value="10:00" />
+            </div>
+          </div>
+          <div class="field-error" id="timeError">End time must be after start time.</div>
+
+          <div class="repeat-row">
+            <label for="fRepeat">Repeat</label>
+            <select id="fRepeat">
+              <option value="none">Does not repeat</option>
+              <option value="daily">Every day</option>
+              <option value="weekly">Every week</option>
+              <option value="monthly">Every month</option>
+              <option value="yearly">Every year</option>
+            </select>
+          </div>
+
+          <div class="repeat-panel" id="repeatPanel" hidden>
+            <div class="repeat-weekly" id="repeatWeeklyFields" hidden>
+              <label>Repeat on</label>
+              <div class="weekday-picker" id="repeatWeekdays">
+                <label><input type="checkbox" value="0" /><span>Sun</span></label>
+                <label><input type="checkbox" value="1" /><span>Mon</span></label>
+                <label><input type="checkbox" value="2" /><span>Tue</span></label>
+                <label><input type="checkbox" value="3" /><span>Wed</span></label>
+                <label><input type="checkbox" value="4" /><span>Thu</span></label>
+                <label><input type="checkbox" value="5" /><span>Fri</span></label>
+                <label><input type="checkbox" value="6" /><span>Sat</span></label>
+              </div>
+            </div>
+            <div class="repeat-note" id="repeatRuleNote"></div>
+            <div class="repeat-end-row">
+              <label for="fRepeatEnd">Ends</label>
+              <select id="fRepeatEnd">
+                <option value="date">On date</option>
+                <option value="count">After occurrences</option>
+              </select>
+            </div>
+            <div class="repeat-end-input">
+              <input type="date" id="fRepeatEndDate" aria-label="Repeat end date" />
+              <input type="number" id="fRepeatCount" min="1" max="366" value="10" aria-label="Number of occurrences" hidden />
+            </div>
+            <div class="repeat-preview" id="repeatPreview"></div>
+            <div class="field-error repeat-error" id="repeatError"></div>
           </div>
         </div>
-        <div class="field-error" id="timeError">End time must be after start time.</div>
         <div class="modal-actions">
           <button type="button" class="btn-cancel" data-action="close-event">Cancel</button>
           <button type="submit" class="btn-create" id="createButton">Create Event</button>
@@ -97,6 +139,10 @@
     <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
       <h2 id="deleteModalTitle">Delete Event</h2>
       <p class="confirm-text">Are you sure you want to delete <b id="confirmTitle"></b>? This can't be undone.</p>
+      <div class="series-delete-actions" id="seriesDeleteActions" hidden>
+        <button type="button" class="btn-delete-secondary" id="deleteThisButton">Delete This Event</button>
+        <button type="button" class="btn-delete" id="deleteSeriesButton">Delete Entire Series</button>
+      </div>
       <div class="modal-actions">
         <button type="button" class="btn-cancel" data-action="close-confirm">Cancel</button>
         <button type="button" class="btn-delete" id="confirmDeleteButton">Delete</button>

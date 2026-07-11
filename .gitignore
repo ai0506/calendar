@@ -17,3 +17,6 @@ dist/
 .DS_Store
 Thumbs.db
 *.log
+
+# Codex / production process files
+production/

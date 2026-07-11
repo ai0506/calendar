@@ -40,3 +40,13 @@ export async function run(db, sql, params = []) {
     .bind(...params)
     .run();
 }
+
+/**
+ * Execute several prepared statements as one D1 atomic batch.
+ * @param {D1Database} db
+ * @param {D1PreparedStatement[]} statements
+ * @returns {Promise<D1Result[]>}
+ */
+export async function batch(db, statements) {
+  return db.batch(statements);
+}

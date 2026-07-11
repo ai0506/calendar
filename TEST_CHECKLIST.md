@@ -24,6 +24,21 @@
 - [x] `PUT /api/events/:id` 更新字段，`updated_at` 刷新
 - [x] `DELETE /api/events/:id` 软删除：`deleted_at` 被设置，列表中不再出现，数据仍在表中
 
+## 重复事件系列 (Event Series)
+- [x] 本地迁移 `0002_recurrence.sql` 成功应用，已有普通事件保持可读
+- [x] 每日规则按结束日期生成正确数量
+- [x] 每周规则支持多个星期几，未选择星期时服务端拒绝空数组
+- [x] 每月 31 日在不存在的月份跳过，不改为月末
+- [x] 每年 2 月 29 日在非闰年跳过，并在下一个闰年恢复
+- [x] 纯日期 `start_time` 要求 `all_day=true`，实例保持纯日期格式
+- [x] 无结束条件、实例数超过 366、候选计算超过 10,000 次时拒绝
+- [x] 相同 `idempotency_key` 重试不会重复创建系列
+- [x] 系列创建使用原子 batch，失败时不留下部分实例
+- [x] `GET /api/event-series/:id` 返回系列规则和未删除实例
+- [x] 删除单个系列实例不影响其他实例
+- [x] 删除整个系列使用 batch 软删除系列和全部实例
+- [ ] 前端 Repeat 弹窗在横屏 / 竖屏真实浏览器中视觉检查
+
 ## 分类 (Categories)
 - [x] `GET /api/categories` 返回 8 个种子分类，颜色各异
 - [x] `POST /api/categories` 创建新分类 → 201

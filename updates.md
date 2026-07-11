@@ -222,3 +222,15 @@
 [ClaudeCode][260711232327] file updated
 [ClaudeCode][260711232356] file updated
 [ClaudeCode][260711232430] MCP 新增重复事件工具 create/get/update/delete_event_series（复用 recurrence.js/series.js，支持 daily/weekly/monthly/yearly，自动派生 start_date 与 monthly_day，MCP 层自动生成 idempotency_key）；工具增至 9 个；refresh token 有效期 30 天→1 年（轮换重置，保持使用即永不重新授权）；本地 21 项测试全通过
+[ClaudeCode][260711233145] file updated
+[ClaudeCode][260711233153] file updated
+[ClaudeCode][260711233202] file updated
+[ClaudeCode][260711233220] file updated
+[ClaudeCode][260711233232] file updated
+[ClaudeCode][260711233251] file updated
+[ClaudeCode][260711233257] file updated
+[ClaudeCode][260711233303] file updated
+[ClaudeCode][260711233339] file updated
+[ClaudeCode][260711233345] file updated
+[ClaudeCode][260711233418] file updated
+[ClaudeCode][260711233456] MCP 新增 skip_occurrence/restore_occurrence/split_series（复用 exceptions/split 逻辑，split 跳过 event_operations 幂等表），工具增至 12；工具描述优先推荐 skip/split 而非整体改/删；颜色支持 "default"（跟随分类色）：create/update event 与 series 均解析，字段说明已更新；本地 22 项测试全通过

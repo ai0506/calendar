@@ -37,6 +37,9 @@ import {
   validateRecurringRequest,
   rowToSeries,
   seriesRowToRequest,
+  isValidDateKey,
+  dateDelta,
+  shiftDate,
 } from "../_lib/recurrence.js";
 import {
   seriesFromRequest,
@@ -80,7 +83,12 @@ const EVENT_WRITE_PROPERTIES = {
   end_time: { type: "string", description: "结束时间，ISO 8601 带时区偏移（可选）" },
   all_day: { type: "boolean", description: "是否全天事件（可选，默认 false）" },
   category: { type: "string", description: "分类名，如 Physics（可选）" },
-  color: { type: "string", description: "颜色 hex，如 #3b82f6（可选）" },
+  color: {
+    type: "string",
+    description:
+      "颜色 hex（如 #3b82f6），或字符串 \"default\" 表示跟随所属分类的颜色（可选）。" +
+      "不确定用什么颜色时优先用 \"default\"，会自动采用 category 的颜色。",
+  },
   group_title: { type: "string", description: "分组标题（可选）" },
 };
 
@@ -189,8 +197,10 @@ const TOOLS = [
   {
     name: "update_event_series",
     description:
-      "【需写权限】修改整个重复系列的规则（仅传要改的字段）。会按新规则重新生成全部实例，" +
-      "之前对单个实例的单独修改不会保留；仍符合新规则的跳过项(exceptions)会保留。",
+      "【需写权限】修改整个重复系列的规则（仅传要改的字段），会按新规则**重新生成全部实例**。" +
+      "⚠️ 影响面大：之前对单个实例的单独修改会丢失。" +
+      "👉 优先考虑更精细的做法：只想改“从某天起”的规则 → 用 split_series 先切成两段再改新段；" +
+      "只想去掉/挪动某一次 → 用 skip_occurrence。仅当要整体改动整个系列时才用本工具。",
     annotations: { readOnlyHint: false },
     inputSchema: {
       type: "object",
@@ -213,12 +223,64 @@ const TOOLS = [
   },
   {
     name: "delete_event_series",
-    description: "【需写权限】软删除整个重复系列及其全部未删除实例。若只想删一次，改用 delete_event。",
+    description:
+      "【需写权限】软删除**整个**重复系列及其全部未删除实例。" +
+      "👉 若只想去掉其中一次，别用这个——改用 skip_occurrence（保留系列，只跳过那一次）。",
     annotations: { readOnlyHint: false, destructiveHint: true },
     inputSchema: {
       type: "object",
       properties: { id: { type: "string", description: "系列 id（series_id）" } },
       required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "skip_occurrence",
+    description:
+      "【需写权限｜推荐】跳过重复系列中的**某一次**（不影响其余）。用于“这周二那次取消/请假”。" +
+      "只登记跳过，不创建替代事件；如需改期，跳过后再用 create_event 单独建一个普通事件。",
+    annotations: { readOnlyHint: false },
+    inputSchema: {
+      type: "object",
+      properties: {
+        series_id: { type: "string", description: "系列 id" },
+        original_start_time: {
+          type: "string",
+          description: "要跳过的那一次的原始开始时间（ISO 8601 带时区偏移，须与系列生成的实例时间一致）",
+        },
+      },
+      required: ["series_id", "original_start_time"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "restore_occurrence",
+    description: "【需写权限】撤销之前的跳过，恢复重复系列中某一次的实例。与 skip_occurrence 相反。",
+    annotations: { readOnlyHint: false },
+    inputSchema: {
+      type: "object",
+      properties: {
+        series_id: { type: "string", description: "系列 id" },
+        original_start_time: { type: "string", description: "此前被跳过的那一次的原始开始时间（ISO 8601）" },
+      },
+      required: ["series_id", "original_start_time"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "split_series",
+    description:
+      "【需写权限｜推荐】把一个重复系列从 split_date 起切成前后两段（split_date 归入新段）。" +
+      "用于“从某天起改变重复规则/时间/分类”而**不影响之前的历史**：切分后对返回的 new_series_id " +
+      "调用 update_event_series 修改新段即可。仅支持带 end_date 且无 occurrence_count 的系列。",
+    annotations: { readOnlyHint: false },
+    inputSchema: {
+      type: "object",
+      properties: {
+        series_id: { type: "string", description: "要切分的系列 id" },
+        split_date: { type: "string", description: "切分日期 YYYY-MM-DD，该日起属于新段（须在系列范围内）" },
+      },
+      required: ["series_id", "split_date"],
       additionalProperties: false,
     },
   },
@@ -254,6 +316,19 @@ async function getActiveEvent(env, id) {
   return queryOne(env.DB, "SELECT * FROM events WHERE id = ? AND deleted_at IS NULL", [id]);
 }
 
+// 颜色 "default" 语义：跟随所属分类的颜色。
+// - color 为具体值 → 原样返回
+// - color 为 "default"（忽略大小写）→ 返回该分类的颜色；无分类或查不到则 null
+// - color 未提供(undefined) → 原样返回 undefined（由调用方 ?? null 处理）
+async function resolveDefaultColor(env, category, color) {
+  if (typeof color !== "string" || color.toLowerCase() !== "default") return color;
+  if (category) {
+    const cat = await queryOne(env.DB, "SELECT color FROM categories WHERE name = ?", [category]);
+    if (cat?.color) return cat.color;
+  }
+  return null;
+}
+
 // 对应 POST /api/events
 async function runCreateEvent(env, args = {}) {
   const msg = validateEventInput(args, true);
@@ -270,7 +345,7 @@ async function runCreateEvent(env, args = {}) {
     end_time: args.end_time ?? null,
     all_day: toIntBool(args.all_day),
     category: args.category ?? null,
-    color: args.color ?? null,
+    color: (await resolveDefaultColor(env, args.category ?? null, args.color)) ?? null,
     group_title: args.group_title ?? null,
     source: args.source ?? "mcp",
     external_id: args.external_id ?? null,
@@ -319,6 +394,11 @@ async function runUpdateEvent(env, args = {}) {
   ) {
     const category = await queryOne(env.DB, "SELECT color FROM categories WHERE name = ?", [body.category]);
     if (category?.color) body.color = category.color;
+  }
+
+  // 显式把颜色设为 "default"（未随分类变更被上面处理时）：跟随有效分类颜色
+  if (typeof body.color === "string" && body.color.toLowerCase() === "default") {
+    body.color = await resolveDefaultColor(env, body.category ?? existing.category, "default");
   }
 
   const sets = [];
@@ -399,6 +479,7 @@ function buildRecurrenceBody(args) {
 // 对应 POST /api/event-series
 async function runCreateEventSeries(env, args = {}) {
   const body = buildRecurrenceBody(args);
+  body.color = (await resolveDefaultColor(env, body.category, body.color)) ?? null;
   const eventMessage = validateEventInput(body, true);
   if (eventMessage) throw new Error(eventMessage);
   const recurrenceMessage = validateRecurringRequest(body);
@@ -458,6 +539,9 @@ async function runUpdateEventSeries(env, args = {}) {
   }
   if (args.start_time !== undefined && args.start_date === undefined) {
     merged.start_date = String(merged.start_time).slice(0, 10);
+  }
+  if (typeof merged.color === "string" && merged.color.toLowerCase() === "default") {
+    merged.color = await resolveDefaultColor(env, merged.category, "default");
   }
   merged.interval = 1;
   if (merged.frequency === "monthly") {
@@ -533,6 +617,193 @@ async function runDeleteEventSeries(env, args = {}) {
   return { id, deleted: true };
 }
 
+// 判断 originalStartTime 是否为该系列的一个实例；返回 { instance, index } 或 null。
+function occurrenceFor(series, originalStartTime) {
+  const instances = generateInstances(seriesRowToRequest(series));
+  const index = instances.findIndex((i) => i.start_time === originalStartTime);
+  return index < 0 ? null : { instance: instances[index], index };
+}
+
+// 对应 POST /api/event-series/:id/exceptions —— 跳过某一次
+async function runSkipOccurrence(env, args = {}) {
+  const seriesId = args.series_id;
+  const originalStartTime = args.original_start_time;
+  if (typeof seriesId !== "string" || seriesId === "") throw new Error("series_id is required");
+  if (!isValidIso(originalStartTime)) throw new Error("original_start_time must be a valid ISO 8601 value");
+
+  const series = await getActiveSeries(env, seriesId);
+  if (!series) throw new Error("Event series not found");
+
+  let occurrence;
+  try {
+    occurrence = occurrenceFor(series, originalStartTime);
+  } catch (err) {
+    throw new Error(err.message || "Invalid recurrence rule");
+  }
+  if (!occurrence) throw new Error("The specified time is not an occurrence of this series");
+
+  const existing = await queryOne(
+    env.DB,
+    "SELECT * FROM event_exceptions WHERE series_id = ? AND original_start_time = ?",
+    [seriesId, originalStartTime],
+  );
+  if (existing) return { ...existing, skipped: true };
+
+  const now = nowIso();
+  await batch(env.DB, [
+    env.DB.prepare("INSERT INTO event_exceptions (id, series_id, original_start_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(crypto.randomUUID(), seriesId, originalStartTime, now, now),
+    env.DB.prepare("UPDATE events SET deleted_at = ?, updated_at = ? WHERE series_id = ? AND original_start_time = ? AND deleted_at IS NULL")
+      .bind(now, now, seriesId, originalStartTime),
+  ]);
+  const created = await queryOne(
+    env.DB,
+    "SELECT * FROM event_exceptions WHERE series_id = ? AND original_start_time = ?",
+    [seriesId, originalStartTime],
+  );
+  return { ...created, skipped: true };
+}
+
+// 对应 DELETE /api/event-series/:id/exceptions/:exceptionId —— 恢复被跳过的一次
+async function runRestoreOccurrence(env, args = {}) {
+  const seriesId = args.series_id;
+  const originalStartTime = args.original_start_time;
+  if (typeof seriesId !== "string" || seriesId === "") throw new Error("series_id is required");
+  if (!isValidIso(originalStartTime)) throw new Error("original_start_time must be a valid ISO 8601 value");
+
+  const series = await getActiveSeries(env, seriesId);
+  if (!series) throw new Error("Event series not found");
+
+  const exception = await queryOne(
+    env.DB,
+    "SELECT * FROM event_exceptions WHERE series_id = ? AND original_start_time = ?",
+    [seriesId, originalStartTime],
+  );
+  if (!exception) throw new Error("Event exception not found");
+
+  let occurrence;
+  try {
+    occurrence = occurrenceFor(series, originalStartTime);
+  } catch (err) {
+    throw new Error(err.message || "Invalid recurrence rule");
+  }
+  if (!occurrence) throw new Error("The exception no longer matches this series");
+
+  const now = nowIso();
+  const existing = await queryOne(
+    env.DB,
+    "SELECT * FROM events WHERE series_id = ? AND original_start_time = ? ORDER BY deleted_at IS NULL DESC LIMIT 1",
+    [seriesId, originalStartTime],
+  );
+  const statements = [
+    env.DB.prepare("DELETE FROM event_exceptions WHERE id = ? AND series_id = ?").bind(exception.id, seriesId),
+  ];
+  if (existing) {
+    statements.push(env.DB.prepare("UPDATE events SET deleted_at = NULL, updated_at = ? WHERE id = ?").bind(now, existing.id));
+  } else {
+    statements.push(
+      env.DB.prepare(`INSERT INTO events
+        (id, title, description, start_time, end_time, all_day, category, color,
+         group_title, source, external_id, series_id, recurrence_index,
+         original_start_time, created_at, updated_at, deleted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .bind(
+          crypto.randomUUID(), series.title, series.description,
+          occurrence.instance.start_time, occurrence.instance.end_time,
+          series.all_day, series.category, series.color, series.group_title,
+          "series", null, seriesId, occurrence.index,
+          occurrence.instance.start_time, now, now, null,
+        ),
+    );
+  }
+  await batch(env.DB, statements);
+  return { series_id: seriesId, original_start_time: originalStartTime, restored: true };
+}
+
+// 把请求体的起始日期平移到 newStartDate（用于 split 的新段），保留时间部分与时长。
+function moveRequestStartDate(body, newStartDate) {
+  const oldStartDate = body.start_time.slice(0, 10);
+  const startSuffix = body.start_time.slice(10);
+  const endSuffix = body.end_time ? body.end_time.slice(10) : "";
+  const endDelta = body.end_time ? dateDelta(oldStartDate, body.end_time.slice(0, 10)) : 0;
+  return {
+    ...body,
+    start_date: newStartDate,
+    start_time: `${newStartDate}${startSuffix}`,
+    end_time: body.end_time ? `${shiftDate(newStartDate, endDelta)}${endSuffix}` : null,
+  };
+}
+
+// 对应 POST /api/event-series/:id/split —— 从 split_date 起切成两段
+async function runSplitSeries(env, args = {}) {
+  const seriesId = args.series_id;
+  const splitDate = args.split_date;
+  if (typeof seriesId !== "string" || seriesId === "") throw new Error("series_id is required");
+  if (!isValidDateKey(splitDate)) throw new Error("split_date must be a valid YYYY-MM-DD date");
+
+  const series = await getActiveSeries(env, seriesId);
+  if (!series) throw new Error("Event series not found");
+  if (!series.end_date || series.occurrence_count !== null) {
+    throw new Error("Split requires a series with end_date and no occurrence_count");
+  }
+  if (splitDate <= series.start_date || splitDate >= series.end_date) {
+    throw new Error("split_date must be inside the series date range");
+  }
+
+  const oldBody = seriesRowToRequest(series);
+  oldBody.end_date = shiftDate(splitDate, -1);
+  oldBody.occurrence_count = null;
+  oldBody.idempotency_key = crypto.randomUUID();
+
+  const newBody = seriesRowToRequest(series);
+  Object.assign(newBody, moveRequestStartDate(newBody, splitDate));
+  newBody.end_date = series.end_date;
+  newBody.occurrence_count = null;
+  newBody.idempotency_key = crypto.randomUUID();
+
+  const oldMessage = validateRecurringRequest(oldBody);
+  const newMessage = validateRecurringRequest(newBody);
+  if (oldMessage || newMessage) throw new Error(oldMessage || newMessage);
+
+  let newInstances;
+  try {
+    generateInstances(oldBody);
+    newInstances = generateInstances(newBody);
+  } catch (err) {
+    throw new Error(err.message || "Invalid split rule");
+  }
+
+  const exceptions = await queryAll(
+    env.DB,
+    "SELECT * FROM event_exceptions WHERE series_id = ? AND substr(original_start_time, 1, 10) >= ?",
+    [seriesId, splitDate],
+  );
+  const migratedExceptions = new Set(exceptions.map((e) => e.original_start_time));
+  const now = nowIso();
+  const newSeriesId = crypto.randomUUID();
+  const newSeries = seriesFromRequest(newBody, newSeriesId, crypto.randomUUID(), now);
+
+  const statements = [
+    env.DB.prepare("UPDATE event_series SET end_date = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL").bind(oldBody.end_date, now, seriesId),
+    env.DB.prepare("UPDATE events SET deleted_at = ?, updated_at = ? WHERE series_id = ? AND substr(original_start_time, 1, 10) >= ? AND deleted_at IS NULL").bind(now, now, seriesId, splitDate),
+    env.DB.prepare("UPDATE event_exceptions SET series_id = ?, updated_at = ? WHERE series_id = ? AND substr(original_start_time, 1, 10) >= ?").bind(newSeriesId, now, seriesId, splitDate),
+    insertSeriesStatement(env.DB, newSeries),
+  ];
+  newInstances.forEach((instance, index) => {
+    if (!migratedExceptions.has(instance.start_time)) {
+      statements.push(insertInstanceStatement(env.DB, newSeries, instance, index, now));
+    }
+  });
+  await batch(env.DB, statements);
+  return {
+    old_series_id: seriesId,
+    new_series_id: newSeriesId,
+    old_end_date: oldBody.end_date,
+    new_start_date: splitDate,
+    created_count: newInstances.length,
+  };
+}
+
 // --- 鉴权 -----------------------------------------------------------------
 
 function extractBearer(request) {
@@ -589,6 +860,9 @@ async function callTool(env, name, args) {
     case "get_event_series": return runGetEventSeries(env, args);
     case "update_event_series": return runUpdateEventSeries(env, args);
     case "delete_event_series": return runDeleteEventSeries(env, args);
+    case "skip_occurrence": return runSkipOccurrence(env, args);
+    case "restore_occurrence": return runRestoreOccurrence(env, args);
+    case "split_series": return runSplitSeries(env, args);
     default: throw new Error(`未知工具：${name}`);
   }
 }

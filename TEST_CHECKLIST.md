@@ -44,6 +44,8 @@
 - [x] split 将后续 exceptions 迁移到新系列
 - [x] split 相同 `Idempotency-Key` 重试不重复切分
 - [x] `PATCH /api/event-series/:id` 重建实例并返回更新摘要
+- [x] 系列 PATCH 仅修改标题时保留原 category / color / weekdays 等未提交字段（MCP 与 REST）
+- [x] 系列 PATCH 可用 `null` 显式清空可选字段，且损坏的 weekdays JSON 不会让更新直接崩溃
 - [x] PATCH 相同 `Idempotency-Key` 重试不重复重建
 - [x] PATCH 后不再匹配新规则的 exceptions 被清理
 - [x] 前端 Repeat 弹窗在横屏 / 竖屏真实浏览器中视觉检查

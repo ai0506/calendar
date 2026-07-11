@@ -37,6 +37,7 @@ import {
   validateRecurringRequest,
   rowToSeries,
   seriesRowToRequest,
+  mergeSeriesPatch,
   isValidDateKey,
   dateDelta,
   shiftDate,
@@ -533,10 +534,7 @@ async function runUpdateEventSeries(env, args = {}) {
   const series = await getActiveSeries(env, id);
   if (!series) throw new Error("Event series not found");
 
-  const merged = seriesRowToRequest(series);
-  for (const field of SERIES_PATCH_FIELDS) {
-    if (args[field] !== undefined) merged[field] = args[field];
-  }
+  const merged = mergeSeriesPatch(series, args, SERIES_PATCH_FIELDS);
   if (args.start_time !== undefined && args.start_date === undefined) {
     merged.start_date = String(merged.start_time).slice(0, 10);
   }
@@ -555,6 +553,8 @@ async function runUpdateEventSeries(env, args = {}) {
 
   const eventMessage = validateEventInput(merged, true);
   if (eventMessage) throw new Error(eventMessage);
+  const temporalMessage = validateEventTemporalOrder(merged);
+  if (temporalMessage) throw new Error(temporalMessage);
   const recurrenceMessage = validateRecurringRequest(merged);
   if (recurrenceMessage) throw new Error(recurrenceMessage);
 

@@ -6,7 +6,7 @@ import { queryAll, queryOne, batch } from "../../_lib/db.js";
 import { ok, error } from "../../_lib/response.js";
 import { rowToEvent, nowIso } from "../../_lib/events.js";
 import { validateEventInput, validateEventTemporalOrder } from "../../_lib/events.js";
-import { generateInstances, rowToSeries, seriesRowToRequest, validateRecurringRequest } from "../../_lib/recurrence.js";
+import { generateInstances, rowToSeries, mergeSeriesPatch, validateRecurringRequest } from "../../_lib/recurrence.js";
 import { activeEventCount, insertInstanceStatement, seriesFromRequest } from "../../_lib/series.js";
 import { getIdempotencyKey, getOperation, hashRequest, isUniqueConflict } from "../../_lib/operations.js";
 
@@ -78,10 +78,7 @@ export async function onRequestPatch(context) {
     return ok(await seriesPatchResponse(env, params.id));
   }
 
-  const merged = seriesRowToRequest(series);
-  for (const field of SERIES_PATCH_FIELDS) {
-    if (body[field] !== undefined) merged[field] = body[field];
-  }
+  const merged = mergeSeriesPatch(series, body, SERIES_PATCH_FIELDS);
   merged.idempotency_key = crypto.randomUUID();
   const eventMessage = validateEventInput(merged, true);
   if (eventMessage) return error("validation_error", eventMessage, 400);

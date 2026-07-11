@@ -269,6 +269,10 @@ export function rowToSeries(row) {
  * idempotency key because stored series keys identify the series creation,
  * not a later mutation operation. */
 export function seriesRowToRequest(row, idempotencyKey = crypto.randomUUID()) {
+  let weekdays = null;
+  if (row.weekdays) {
+    try { weekdays = JSON.parse(row.weekdays); } catch { weekdays = null; }
+  }
   return {
     title: row.title,
     description: row.description,
@@ -280,7 +284,7 @@ export function seriesRowToRequest(row, idempotencyKey = crypto.randomUUID()) {
     group_title: row.group_title,
     frequency: row.frequency,
     interval: row.interval ?? 1,
-    weekdays: row.weekdays ? JSON.parse(row.weekdays) : null,
+    weekdays,
     monthly_mode: row.monthly_mode,
     monthly_day: row.monthly_day,
     start_date: row.start_date,
@@ -288,4 +292,17 @@ export function seriesRowToRequest(row, idempotencyKey = crypto.randomUUID()) {
     occurrence_count: row.occurrence_count,
     idempotency_key: idempotencyKey,
   };
+}
+
+/**
+ * Merge a partial series update with the stored row.
+ * Undefined means "leave the stored value unchanged"; null remains an
+ * explicit value so callers can clear optional fields.
+ */
+export function mergeSeriesPatch(row, patch, fields) {
+  const merged = seriesRowToRequest(row);
+  for (const field of fields) {
+    if (patch?.[field] !== undefined) merged[field] = patch[field];
+  }
+  return merged;
 }

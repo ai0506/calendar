@@ -61,6 +61,17 @@ export async function onRequestPut(context) {
   const temporalMsg = validateEventTemporalOrder({ ...existing, ...body });
   if (temporalMsg) return error("validation_error", temporalMsg, 400);
 
+  // Changing only the category should also follow that category's color.
+  // An explicitly supplied color still wins, so custom event colors remain supported.
+  if (
+    body.category !== undefined &&
+    (body.color === undefined || String(body.color).toLowerCase() === "default") &&
+    body.category !== existing.category
+  ) {
+    const category = await queryOne(env.DB, "SELECT color FROM categories WHERE name = ?", [body.category]);
+    if (category?.color) body.color = category.color;
+  }
+
   // 仅更新客户端提供的可更新字段
   const sets = [];
   const values = [];

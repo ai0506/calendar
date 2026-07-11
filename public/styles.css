@@ -15,7 +15,7 @@ body{
   margin:0;
   background:var(--ground);
   color:var(--ink);
-  font-family:-apple-system,"SF Pro Display","SF Pro Text","Inter Tight",Inter,sans-serif;
+  font-family:-apple-system,"SF Pro Display","SF Pro Text","Inter Tight",Inter,"PingFang SC","Microsoft YaHei","微软雅黑","Noto Sans CJK SC","Source Han Sans SC","Hiragino Sans GB","Heiti SC",sans-serif;
   -webkit-font-smoothing:antialiased;
   display:flex;
   flex-direction:column;

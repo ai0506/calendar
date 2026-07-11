@@ -166,6 +166,10 @@
 [ClaudeCode][260711175724] 在 CLAUDE.md 和 AGENTS.md 中新增 `production/` 文件夹说明：用途（生产过程中的计划草稿、多方案待选文件等暂时性文件）、已被 .gitignore 排除、禁止用 git diff/log/status 判断其变化，需直接重读磁盘文件
 [ClaudeCode][260711175729] file updated
 [Codex][260711184348] Rewrote the default categories to Math, Physics, CS, Other Subjects, Research, Projects, Leisure, and Tech; added migrations to rename existing event categories, reorder them, and remove nonstandard categories; updated project docs and frontend fallback category.
+[Codex][260711201134] Created the personal calendar skill at C:\Users\asw\.codex\skills\calendar with production API instructions, category guidance, API references, and a PowerShell wrapper that reads CALENDAR_API_TOKEN.
+[Codex][260711201134] Fixed the calendar skill PowerShell wrapper to send the Accept value through request headers for Windows PowerShell compatibility.
+[Codex][260711201134] Configured the calendar skill to read CALENDAR_API_TOKEN from the user-local C:\Users\asw\.codex\calendar.env file and removed reliance on the system environment variable.
+[Codex][260711201134] Documented recurring-series split usage, one-off exception usage, weekday numbering, confirmation requirements, and the current exception API limitation in the calendar skill.
 [ClaudeCode][260711190526] file updated
 [ClaudeCode][260711190537] file updated
 [ClaudeCode][260711190541] file updated
@@ -182,3 +186,9 @@
 [Codex][260711194210] 根据第四轮交互审查修订 EVENT_EDITING_API_PLAN.md：将 event_operations 明确拆分为 source_series_id/result_series_id，补充 PATCH 响应合同，并规定并发幂等键冲突按现有创建接口模式回查已有 operation。
 [Codex][260711194325] 修正文档中 split 幂等记录的字段描述：Idempotency-Key 作为 operation 主键，source_series_id/result_series_id 保存源与结果 series，避免把操作键误写成 series 字段。
 [Codex][260711195102] 按 EVENT_EDITING_API_PLAN.md 实现后端事件修改能力：新增 0005 event_exceptions/event_operations 迁移、except、系列 PATCH、split、幂等与并发回查、时间先后校验；更新 API_DOC/TEST_CHECKLIST/CHANGELOG；完成本地 API 冒烟验证。
+[ClaudeCode][260711203755] file updated
+[ClaudeCode][260711204044] file updated
+[ClaudeCode][260711204054] fix: add CJK fonts (PingFang SC/Microsoft YaHei/Noto Sans CJK etc.) to body font-family stack in styles.css to fix Chinese tofu-box rendering
+[Codex][260711205208] 修复事件分类改为新分类时颜色未同步：PUT 和批量导入在未显式提供 color 时自动使用分类颜色，同时保留显式自定义颜色。
+[Codex][260711205427] 支持事件颜色填写 default：渲染时使用所属分类颜色，批量导入将 default 归一为跟随分类颜色，并保留自定义颜色。
+[Codex][260711205434] 加强 default 颜色值的前端类型判断，避免异常数据导致渲染报错。

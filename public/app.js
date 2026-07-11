@@ -343,7 +343,10 @@ function adaptEvent(row) {
   const end = row.all_day ? "23:59" : timeFromIso(row.end_time, start);
   const categoryName = row.category || FALLBACK_CATEGORY.name;
   const category = getCategory(categoryName);
-  const color = row.color || category.color || FALLBACK_CATEGORY.color;
+  // "default" means the event follows its category color at render time.
+  const color = !row.color || (typeof row.color === "string" && row.color.toLowerCase() === "default")
+    ? (category.color || FALLBACK_CATEGORY.color)
+    : row.color;
   return {
     id: row.id,
     title: row.title || "Untitled",

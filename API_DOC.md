@@ -97,6 +97,73 @@ Phase 1 使用单一 `API_TOKEN`（环境变量）。
 
 ---
 
+### 重复事件系列 (Event Series) — ✅ 已实现
+
+> 重复系列端点同样由全局 middleware 保护。首版只支持创建、查询和删除，不支持修改系列或单次例外。
+> 创建时服务端计算全部实例，并用 D1 `batch()` 原子写入系列和实例。
+
+#### `POST /api/event-series`
+
+创建一个重复事件系列。`idempotency_key` 由客户端为一次新建操作生成 UUID；网络重试必须复用同一个 key。
+
+请求示例：
+
+```json
+{
+  "title": "Physics Revision",
+  "start_time": "2026-07-14T19:00:00+08:00",
+  "end_time": "2026-07-14T21:00:00+08:00",
+  "all_day": false,
+  "category": "Physics",
+  "frequency": "weekly",
+  "interval": 1,
+  "weekdays": [2, 4, 6],
+  "monthly_mode": null,
+  "monthly_day": null,
+  "start_date": "2026-07-14",
+  "end_date": "2026-08-31",
+  "occurrence_count": null,
+  "idempotency_key": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+首版 `frequency` 支持 `daily` / `weekly` / `monthly` / `yearly`。每周 `weekdays` 使用 0–6 表示周日到周六；每月只支持起始日期对应的日期。必须提供 `end_date` 或 `occurrence_count`，最大实例数为 366，计算候选周期最多 10,000 次。
+
+成功：`201`，返回摘要：
+
+```json
+{ "ok": true, "data": { "series_id": "...", "created_count": 21 } }
+```
+
+同一个 `idempotency_key` 重试会返回原系列摘要，不会重复创建，状态为 `200`。
+
+#### `GET /api/event-series/:id`
+
+返回系列规则和当前未软删除的实例：
+
+```json
+{ "ok": true, "data": { "series": { "id": "..." }, "events": [] } }
+```
+
+#### `DELETE /api/event-series/:id`
+
+使用 D1 `batch()` 软删除系列和该系列全部未删除实例。返回：
+
+```json
+{ "ok": true, "data": { "id": "...", "deleted": true } }
+```
+
+单个系列实例仍可使用 `DELETE /api/events/:id` 删除，不影响系列其他实例。
+
+首版暂未提供：
+
+```text
+PUT /api/event-series/:id
+POST /api/event-series/:id/exceptions
+```
+
+---
+
 ### 批量导入 (Import) — ✅ 已实现 (Stage 6)
 
 #### `POST /api/events/import`

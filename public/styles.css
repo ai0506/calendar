@@ -282,6 +282,18 @@ body.is-portrait .inspector{
   will-change:transform;
 }
 .scrim.open .modal{ transform:scale(1) translateY(0); }
+.event-modal{
+  width:440px;
+  height:min(650px, calc(100vh - 24px));
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+.event-modal form{ display:flex; flex:1; min-height:0; flex-direction:column; }
+.event-form-body{
+  flex:1; min-height:0; overflow-y:auto; scrollbar-gutter:stable;
+  padding-right:3px;
+}
 .modal h2{ font-size:17px; font-weight:600; margin:0 0 16px; }
 .field{ margin-bottom:14px; }
 .field label{ display:block; font-size:11.5px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; margin-bottom:6px; }
@@ -309,6 +321,36 @@ body.is-portrait .inspector{
 }
 .field-error.show{ opacity:1; }
 .modal-actions{ display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
+.repeat-row, .repeat-end-row{
+  display:flex; align-items:center; justify-content:space-between; gap:14px;
+  min-height:38px; border-top:1px solid var(--hairline); font-size:13px;
+}
+.repeat-row label, .repeat-end-row label{ color:var(--ink); font-weight:500; }
+.repeat-row select, .repeat-end-row select, .repeat-end-input input{
+  min-width:155px; border:1px solid var(--hairline); border-radius:9px;
+  padding:7px 9px; font:inherit; color:var(--ink); background:var(--soft);
+}
+.repeat-panel{
+  max-height:250px; overflow-y:auto; scrollbar-gutter:stable;
+  padding:2px 2px 0 0;
+}
+.repeat-weekly{ padding:9px 0 4px; }
+.repeat-weekly > label, .repeat-note{ display:block; font-size:11.5px; color:var(--muted); font-weight:600; margin-bottom:8px; }
+.weekday-picker{ display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
+.weekday-picker label{ position:relative; cursor:pointer; user-select:none; }
+.weekday-picker input{ position:absolute; opacity:0; pointer-events:none; }
+.weekday-picker span{
+  display:flex; align-items:center; justify-content:center; height:30px; border-radius:8px;
+  background:var(--soft); color:var(--muted); font-size:10px; font-weight:600;
+  transition:background .12s ease, color .12s ease;
+}
+.weekday-picker input:checked + span{ background:var(--accent); color:#fff; }
+.weekday-picker input:focus-visible + span{ outline:2px solid var(--accent); outline-offset:1px; }
+.repeat-note{ min-height:16px; margin:9px 0 4px; font-weight:500; }
+.repeat-end-input{ display:flex; justify-content:flex-end; min-height:40px; padding-top:5px; }
+.repeat-end-input input{ width:155px; }
+.repeat-preview{ color:var(--muted); font-size:11.5px; min-height:18px; padding-top:5px; }
+.repeat-error{ margin:2px 0 0; }
 .btn-cancel{ border:1px solid var(--hairline); background:var(--ground); padding:8px 16px; border-radius:20px; font-size:13px; font-weight:500; cursor:pointer; font-family:inherit; }
 .btn-cancel:hover{ background:var(--soft); }
 .btn-create{ border:none; background:var(--accent); color:#fff; padding:8px 18px; border-radius:20px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
@@ -316,6 +358,10 @@ body.is-portrait .inspector{
 .btn-create:disabled, .btn-delete:disabled{ opacity:.55; cursor:not-allowed; }
 .btn-delete{ border:none; background:var(--danger); color:#fff; padding:8px 18px; border-radius:20px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
 .btn-delete:hover{ background:#E0342B; }
+.btn-delete-secondary{ border:1px solid #FFB3AE; background:#FFF5F4; color:var(--danger); padding:8px 14px; border-radius:20px; font-size:12.5px; font-weight:600; cursor:pointer; font-family:inherit; }
+.btn-delete-secondary:hover{ background:#FFE3E1; }
+.series-delete-actions{ display:flex; flex-direction:column; gap:8px; margin-top:16px; }
+.series-delete-actions button{ width:100%; }
 .confirm-modal{ width:340px; }
 .confirm-text{ font-size:13.5px; color:var(--ink); line-height:1.55; margin:0; }
 .confirm-text b{ font-weight:600; }
@@ -379,3 +425,12 @@ body.is-portrait .inspector{
   transition:opacity .25s ease, transform .25s ease; z-index:200;
 }
 .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+button, select, input[type=checkbox]{ user-select:none; }
+.repeat-mark{ display:inline-block; margin-left:4px; color:currentColor; opacity:.72; font-size:.9em; }
+
+@media (max-width: 480px){
+  .event-modal{ width:calc(100vw - 24px); }
+  .weekday-picker{ gap:2px; }
+  .weekday-picker span{ font-size:9px; }
+}

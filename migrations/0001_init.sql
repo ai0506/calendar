@@ -58,11 +58,11 @@ CREATE TABLE IF NOT EXISTS categories (
 -- 颜色为初始建议值，可后续调整。
 -- ---------------------------------------------------------------------------
 INSERT OR IGNORE INTO categories (id, name, color, sort_order, created_at) VALUES
-  ('cat-school',   'School',           '#2563eb', 1, '2026-07-10T00:00:00+08:00'),
-  ('cat-research', 'Research',         '#7c3aed', 2, '2026-07-10T00:00:00+08:00'),
-  ('cat-math',     'Math',             '#dc2626', 3, '2026-07-10T00:00:00+08:00'),
-  ('cat-physics',  'Physics',          '#0891b2', 4, '2026-07-10T00:00:00+08:00'),
-  ('cat-cs',       'Computer Science', '#16a34a', 5, '2026-07-10T00:00:00+08:00'),
-  ('cat-project',  'Project',          '#ea580c', 6, '2026-07-10T00:00:00+08:00'),
-  ('cat-personal', 'Personal',         '#db2777', 7, '2026-07-10T00:00:00+08:00'),
-  ('cat-other',    'Other',            '#64748b', 8, '2026-07-10T00:00:00+08:00');
+  ('cat-math',     'Math',             '#dc2626', 1, '2026-07-10T00:00:00+08:00'),
+  ('cat-physics',  'Physics',          '#0891b2', 2, '2026-07-10T00:00:00+08:00'),
+  ('cat-cs',       'CS',               '#16a34a', 3, '2026-07-10T00:00:00+08:00'),
+  ('cat-school',   'Other Subjects',   '#2563eb', 4, '2026-07-10T00:00:00+08:00'),
+  ('cat-research', 'Research',         '#7c3aed', 5, '2026-07-10T00:00:00+08:00'),
+  ('cat-project',  'Projects',         '#ea580c', 6, '2026-07-10T00:00:00+08:00'),
+  ('cat-personal', 'Leisure',          '#db2777', 7, '2026-07-10T00:00:00+08:00'),
+  ('cat-other',    'Tech',             '#64748b', 8, '2026-07-10T00:00:00+08:00');

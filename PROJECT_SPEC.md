@@ -94,7 +94,7 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 | sort_order | INTEGER | 排序 |
 | created_at | TEXT | 创建时间 |
 
-种子分类：School / Research / Math / Physics / Computer Science / Project / Personal / Other，各配不同颜色。分类系统保持简单，方便以后扩展。
+种子分类：Math / Physics / CS / Other Subjects / Research / Projects / Leisure / Tech，各配不同颜色。分类系统保持简单，方便以后扩展。
 
 ### event_series
 

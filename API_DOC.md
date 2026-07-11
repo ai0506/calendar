@@ -201,7 +201,7 @@ POST /api/event-series/:id/exceptions
 ### 分类 (Categories) — ✅ 已实现 (Stage 6)
 
 #### `GET /api/categories`
-返回全部分类，按 `sort_order` 升序、再按 `name` 升序（含种子的 8 个）：
+返回全部分类，按 `sort_order` 升序、再按 `name` 升序（含种子的 8 个：Math / Physics / CS / Other Subjects / Research / Projects / Leisure / Tech）：
 ```json
 {
   "ok": true,

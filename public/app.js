@@ -23,6 +23,8 @@ let refreshTimer = null;
 let clockTimer = null;
 let refreshInFlight = false;
 let lastRangeKey = "";
+const rangeCache = new Map();
+const RANGE_CACHE_LIMIT = 6;
 let pendingDelete = null;
 let repeatIdempotencyKey = null;
 let repeatWeekdayTouched = false;
@@ -268,18 +270,55 @@ async function refreshVisibleData({ silent = true, force = false } = {}) {
   const rangeKey = `${range.from}|${range.to}`;
   if (!force && rangeKey === lastRangeKey && !silent) return;
 
+  const cached = rangeCache.get(rangeKey);
+  if (cached && rangeKey !== lastRangeKey) {
+    applyEvents(cached);
+    lastRangeKey = rangeKey;
+    render();
+  }
+
   refreshInFlight = true;
   try {
     const url = `/api/events?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`;
     const json = await apiFetch(url);
-    applyEvents(json.data || []);
+    const rows = json.data || [];
+    rangeCache.set(rangeKey, rows);
+    trimRangeCache();
+    applyEvents(rows);
     lastRangeKey = rangeKey;
     render();
+    prefetchAdjacentRanges();
   } catch (err) {
     if (err.message !== "Authentication required" && silent) showToast("Sync failed. Keeping current events.");
     if (!silent && err.message !== "Authentication required") showToast(err.message || "Failed to load events.");
   } finally {
     refreshInFlight = false;
+  }
+}
+
+function trimRangeCache() {
+  while (rangeCache.size > RANGE_CACHE_LIMIT) {
+    const oldestKey = rangeCache.keys().next().value;
+    rangeCache.delete(oldestKey);
+  }
+}
+
+async function prefetchAdjacentRanges() {
+  if (currentView !== "month" && !isPortrait()) return;
+  for (const dir of [-1, 1]) {
+    const neighborDate = addMonths(viewDate, dir);
+    const { start, end } = getMonthGridRange(neighborDate);
+    const from = toLocalIso(start, "00:00");
+    const to = toLocalIso(end, "23:59");
+    const key = `${from}|${to}`;
+    if (rangeCache.has(key)) continue;
+    try {
+      const json = await apiFetch(`/api/events?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+      rangeCache.set(key, json.data || []);
+      trimRangeCache();
+    } catch (err) {
+      // best-effort prefetch; ignore failures
+    }
   }
 }
 
@@ -851,8 +890,10 @@ function validateTimes() {
 }
 
 function showTimeError() {
+  const wasShown = els.timeError.classList.contains("show");
   els.timeError.classList.add("show");
   els.fEnd.style.borderColor = "#FF3B30";
+  if (!wasShown) els.timeError.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
 function hideTimeError() {
@@ -945,8 +986,10 @@ function getRepeatConfig() {
 }
 
 function showRepeatError(message) {
+  const wasShown = els.repeatError.classList.contains("show");
   els.repeatError.textContent = message;
   els.repeatError.classList.add("show");
+  if (!wasShown) els.repeatError.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
 function hideRepeatError() {

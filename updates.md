@@ -166,3 +166,19 @@
 [ClaudeCode][260711175724] 在 CLAUDE.md 和 AGENTS.md 中新增 `production/` 文件夹说明：用途（生产过程中的计划草稿、多方案待选文件等暂时性文件）、已被 .gitignore 排除、禁止用 git diff/log/status 判断其变化，需直接重读磁盘文件
 [ClaudeCode][260711175729] file updated
 [Codex][260711184348] Rewrote the default categories to Math, Physics, CS, Other Subjects, Research, Projects, Leisure, and Tech; added migrations to rename existing event categories, reorder them, and remove nonstandard categories; updated project docs and frontend fallback category.
+[ClaudeCode][260711190526] file updated
+[ClaudeCode][260711190537] file updated
+[ClaudeCode][260711190541] file updated
+[ClaudeCode][260711190545] file updated
+[ClaudeCode][260711190549] file updated
+[ClaudeCode][260711190553] file updated
+[ClaudeCode][260711190602] file updated
+[ClaudeCode][260711191018] Cache fetched event ranges and prefetch adjacent months to reduce blank flash on month navigation; fix left-clipped focus outline in event modal form fields (missing left padding on scrollable containers); auto-scroll time/repeat validation errors into view when they first appear.
+[Codex][260711192942] 新增 production/EVENT_EDITING_API_PLAN.md，整理普通事件修改、仅跳过一次的 except、规则分段 split、系列修改 API、数据校验与事务边界；未修改业务代码。
+[Codex][260711193100] 根据审查意见修订 EVENT_EDITING_API_PLAN.md：except 改为复用 generateInstances，补充 split 的新幂等键、旧实例清理和 occurrence_count 限制，明确时间校验兼容性与系列重建丢失实例级修改的副作用，并加入 exceptions 返回与错误码登记要求。
+[Codex][260711193512] 根据第二轮交互审查修订 EVENT_EDITING_API_PLAN.md：split 迁移后续 exceptions，补充 split/PATCH 的 Idempotency-Key 重试语义，统一 exception 为硬删除，并清理 PATCH 后不再匹配新规则的 exceptions。
+[Codex][260711193728] 根据第三轮交互审查修订 EVENT_EDITING_API_PLAN.md：明确 split 使用新 series 的 event_series.idempotency_key，PATCH 使用 event_operations 持久化幂等键与请求指纹，补充重试冲突处理及 body/header 幂等键约定。
+[Codex][260711193945] 进一步统一 split 与 PATCH 的幂等实现：两者均使用 event_operations 保存操作 key、源 series 和请求指纹，新 series 保留独立的内部 idempotency_key，避免同一 key 无法校验不同 split 参数的问题。
+[Codex][260711194210] 根据第四轮交互审查修订 EVENT_EDITING_API_PLAN.md：将 event_operations 明确拆分为 source_series_id/result_series_id，补充 PATCH 响应合同，并规定并发幂等键冲突按现有创建接口模式回查已有 operation。
+[Codex][260711194325] 修正文档中 split 幂等记录的字段描述：Idempotency-Key 作为 operation 主键，source_series_id/result_series_id 保存源与结果 series，避免把操作键误写成 series 字段。
+[Codex][260711195102] 按 EVENT_EDITING_API_PLAN.md 实现后端事件修改能力：新增 0005 event_exceptions/event_operations 迁移、except、系列 PATCH、split、幂等与并发回查、时间先后校验；更新 API_DOC/TEST_CHECKLIST/CHANGELOG；完成本地 API 冒烟验证。

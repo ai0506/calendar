@@ -50,7 +50,7 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 - 事件分类系统（颜色）
 - 数据云端同步（D1）
 - API（获取 / 创建 / 修改 / 删除 / 批量导入 / 导出）
-- 重复事件系列（规则创建、实例查询、单次/系列软删除）
+- 重复事件系列（规则创建、实例查询、系列修改、except、split、单次/系列软删除）
 - 基础项目文档
 
 优先级：**稳定 > 简洁 > 易维护 > 可扩展**。不为未来功能过度设计。
@@ -98,7 +98,13 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 
 ### event_series
 
-重复规则保存在 `event_series`，实际显示的每次事件仍保存在 `events`，通过 `events.series_id` 关联。首版支持 daily / weekly / monthly / yearly，最大 366 个实例；系列创建使用幂等键和 D1 原子批次。
+重复规则保存在 `event_series`，实际显示的每次事件仍保存在 `events`，通过 `events.series_id` 关联。支持 daily / weekly / monthly / yearly，最大 366 个实例；系列创建、修改和 split 使用 D1 原子批次。
+
+### event_exceptions 与 event_operations
+
+`event_exceptions` 只记录重复系列中被跳过的 occurrence，使用 `(series_id, original_start_time)` 唯一定位；延期或替代事件不进入 exceptions，而是通过普通事件 API 单独创建。
+
+`event_operations` 保存 PATCH/split 等多步变更的 `Idempotency-Key`、源 series、结果 series 和请求指纹，用于网络重试和并发冲突回查。系列修改会重新生成实例；第一版不保留此前对单个系列实例的直接修改。
 
 ### 未来表（本阶段不创建）
 - `day_marks`（Days Matter 倒计时）

@@ -292,7 +292,7 @@ body.is-portrait .inspector{
 .event-modal form{ display:flex; flex:1; min-height:0; flex-direction:column; }
 .event-form-body{
   flex:1; min-height:0; overflow-y:auto; scrollbar-gutter:stable;
-  padding-right:3px;
+  padding:0 3px;
 }
 .modal h2{ font-size:17px; font-weight:600; margin:0 0 16px; }
 .field{ margin-bottom:14px; }
@@ -332,7 +332,7 @@ body.is-portrait .inspector{
 }
 .repeat-panel{
   max-height:250px; overflow-y:auto; scrollbar-gutter:stable;
-  padding:2px 2px 0 0;
+  padding:2px 2px 0 3px;
 }
 .repeat-weekly{ padding:9px 0 4px; }
 .repeat-weekly > label, .repeat-note{ display:block; font-size:11.5px; color:var(--muted); font-weight:600; margin-bottom:8px; }

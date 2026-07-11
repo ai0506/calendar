@@ -7,6 +7,7 @@ import { queryOne, run } from "../../_lib/db.js";
 import { ok, error } from "../../_lib/response.js";
 import {
   validateEventInput,
+  validateEventTemporalOrder,
   rowToEvent,
   nowIso,
   toIntBool,
@@ -56,6 +57,9 @@ export async function onRequestPut(context) {
 
   const msg = validateEventInput(body, false);
   if (msg) return error("validation_error", msg, 400);
+
+  const temporalMsg = validateEventTemporalOrder({ ...existing, ...body });
+  if (temporalMsg) return error("validation_error", temporalMsg, 400);
 
   // 仅更新客户端提供的可更新字段
   const sets = [];

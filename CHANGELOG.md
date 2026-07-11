@@ -21,3 +21,4 @@
   - 批量导入 API：`POST /api/events/import`（按 `(source, external_id)` 幂等去重，返回 created/updated/skipped 统计）
   - 导出 API：`GET /api/export?format=json|csv|md`
   - Phase 1 后端基础（认证 + events CRUD + import + categories + export）全部完成
+  - 后端事件修改 API：普通事件时间先后校验、重复系列 PATCH、单次 except、系列 split、event_operations 幂等和 event_exceptions 记录

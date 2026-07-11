@@ -25,6 +25,30 @@ export function isValidIso(v) {
   return typeof v === "string" && ISO_8601.test(v);
 }
 
+function isDateOnlyValue(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+/**
+ * Check temporal ordering after basic ISO validation has passed.
+ * Date-only all-day events may use the same start/end date; timed events
+ * must have an end strictly after the start on a common time axis.
+ */
+export function validateEventTemporalOrder(input) {
+  const start = input?.start_time;
+  const end = input?.end_time;
+  if (!start || end === undefined || end === null || end === "") return null;
+  if (isDateOnlyValue(start) && isDateOnlyValue(end) && toIntBool(input.all_day) === 1) {
+    if (end < start) return "end_time must not be before start_time";
+    return null;
+  }
+  const startMs = Date.parse(start);
+  const endMs = Date.parse(end);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+  if (endMs <= startMs) return "end_time must be after start_time";
+  return null;
+}
+
 /** 服务器生成的时间戳（ISO 8601，Z 即 +00:00 偏移）。 */
 export function nowIso() {
   return new Date().toISOString();

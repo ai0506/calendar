@@ -99,7 +99,7 @@ Phase 1 使用单一 `API_TOKEN`（环境变量）。
 
 ### 重复事件系列 (Event Series) — ✅ 已实现
 
-> 重复系列端点同样由全局 middleware 保护。首版只支持创建、查询和删除，不支持修改系列或单次例外。
+> 重复系列端点同样由全局 middleware 保护。当前支持创建、查询、删除、系列修改、split 和单次 except。
 > 创建时服务端计算全部实例，并用 D1 `batch()` 原子写入系列和实例。
 
 #### `POST /api/event-series`
@@ -139,11 +139,76 @@ Phase 1 使用单一 `API_TOKEN`（环境变量）。
 
 #### `GET /api/event-series/:id`
 
-返回系列规则和当前未软删除的实例：
+返回系列规则、当前未软删除的实例和已登记的 exceptions。被 except 的原始实例不会出现在 `events` 中，但会出现在 `exceptions` 中：
 
 ```json
-{ "ok": true, "data": { "series": { "id": "..." }, "events": [] } }
+{ "ok": true, "data": { "series": { "id": "..." }, "events": [], "exceptions": [] } }
 ```
+
+#### `PATCH /api/event-series/:id`
+
+部分修改重复规则。服务端将存储的 series 行和请求 body 合并后调用同一套 `validateRecurringRequest` / `generateInstances`，重新生成实例。
+
+请求必须携带：
+
+```http
+Idempotency-Key: <operation-uuid>
+```
+
+该操作会生成新的实例 ID；之前通过 `PUT /api/events/:id` 单独修改的实例不会保留。仍属于新规则的 exceptions 会保留，不再属于新规则的 exceptions 会被清理。成功响应：
+
+```json
+{ "ok": true, "data": { "series_id": "...", "updated": true, "created_count": 21 } }
+```
+
+相同 key 重试返回相同摘要；相同 key 搭配不同请求返回 `409`。
+
+#### `POST /api/event-series/:id/exceptions`
+
+只跳过重复规则中的一次，不创建替代事件。延期或替代安排应另行调用 `POST /api/events` 创建普通事件。
+
+请求：
+
+```json
+{ "original_start_time": "2026-07-20T19:00:00+08:00" }
+```
+
+服务端使用 `generateInstances` 判断目标是否确实属于该系列；不属于时返回 `400 not_an_occurrence`。如果对应实例已经生成，则软删除该实例；如果尚未存在，则只保存 exception。相同目标重复提交幂等返回已有 exception。
+
+#### `DELETE /api/event-series/:seriesId/exceptions/:exceptionId`
+
+删除 exception 并恢复原规则对应的实例。exception 控制记录采用硬删除，恢复过程与删除 exception 在同一个 D1 `batch()` 中完成。
+
+#### `POST /api/event-series/:id/split`
+
+将一个具有 `end_date` 且没有 `occurrence_count` 的系列分成前后两段。`split_date` 属于新段：旧系列结束于前一天，新系列从该日期开始。新系列获得新的 `id` 和 `event_series.idempotency_key`；旧系列在 split_date 之后的实例会软删除，相关 exceptions 会迁移到新系列。
+
+请求必须携带：
+
+```http
+Idempotency-Key: <operation-uuid>
+```
+
+```json
+{ "split_date": "2026-08-01" }
+```
+
+成功响应：
+
+```json
+{
+  "ok": true,
+  "data": {
+    "old_series_id": "...",
+    "new_series_id": "...",
+    "old_end_date": "2026-07-31",
+    "new_start_date": "2026-08-01",
+    "created_count": 9
+  }
+}
+```
+
+只有 `occurrence_count` 的系列暂不支持 split，返回 `400 split_not_supported_for_count_series`。split 使用 `event_operations` 保存操作幂等键，支持并发冲突回查。
 
 #### `DELETE /api/event-series/:id`
 
@@ -154,13 +219,6 @@ Phase 1 使用单一 `API_TOKEN`（环境变量）。
 ```
 
 单个系列实例仍可使用 `DELETE /api/events/:id` 删除，不影响系列其他实例。
-
-首版暂未提供：
-
-```text
-PUT /api/event-series/:id
-POST /api/event-series/:id/exceptions
-```
 
 ---
 
@@ -258,4 +316,6 @@ POST /api/event-series/:id/exceptions
 | `validation_error` | 请求体字段校验失败 |
 | `not_found` | 资源不存在 |
 | `conflict` | 唯一约束冲突（如分类名重复） |
+| `not_an_occurrence` | 指定时间不是该重复系列的有效实例 |
+| `split_not_supported_for_count_series` | 只有 occurrence_count 的系列暂不支持 split |
 | `server_error` | 内部错误 |

@@ -5,7 +5,7 @@
 
 import { queryOne, run } from "../../_lib/db.js";
 import { ok, error } from "../../_lib/response.js";
-import { validateEventInput, nowIso, toIntBool } from "../../_lib/events.js";
+import { validateEventInput, validateEventTemporalOrder, nowIso, toIntBool } from "../../_lib/events.js";
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -27,6 +27,11 @@ export async function onRequestPost(context) {
 
     const msg = validateEventInput(item, true);
     if (msg) {
+      skipped++;
+      continue;
+    }
+    const temporalMsg = validateEventTemporalOrder(item);
+    if (temporalMsg) {
       skipped++;
       continue;
     }

@@ -84,6 +84,14 @@ function addDays(date, amount) {
   return formatDate(year, month, day);
 }
 
+export function shiftDate(date, amount) {
+  return addDays(date, amount);
+}
+
+export function dateDelta(startDate, endDate) {
+  return parseDateDelta(startDate, endDate);
+}
+
 function addMonths(date, amount) {
   const { year, month } = dateParts(date);
   const zeroBased = year * 12 + (month - 1) + amount;
@@ -147,6 +155,8 @@ export function validateRecurringRequest(body) {
     const sameShape = startDateOnly ? isDateOnly(endTime) : isDateTime(endTime);
     if (!sameShape) return "start_time and end_time must use the same date format";
     if (compareDate(endTime.slice(0, 10), body.start_date) < 0) return "end_time must not be before start_time";
+    if (!startDateOnly && Date.parse(endTime) <= Date.parse(body.start_time)) return "end_time must be after start_time";
+    if (startDateOnly && compareDate(endTime, body.start_time) < 0) return "end_time must not be before start_time";
   }
 
   if (body.end_date !== undefined && body.end_date !== null && body.end_date !== "" && !isValidDateKey(body.end_date)) {
@@ -252,4 +262,30 @@ export function rowToSeries(row) {
     try { weekdays = JSON.parse(row.weekdays); } catch { weekdays = null; }
   }
   return { ...row, all_day: row.all_day === 1, weekdays };
+}
+
+/** Convert a stored event_series row into the request shape used by the
+ * recurrence validator/calculator. The caller supplies a fresh validation
+ * idempotency key because stored series keys identify the series creation,
+ * not a later mutation operation. */
+export function seriesRowToRequest(row, idempotencyKey = crypto.randomUUID()) {
+  return {
+    title: row.title,
+    description: row.description,
+    start_time: row.start_time,
+    end_time: row.end_time,
+    all_day: row.all_day === 1,
+    category: row.category,
+    color: row.color,
+    group_title: row.group_title,
+    frequency: row.frequency,
+    interval: row.interval ?? 1,
+    weekdays: row.weekdays ? JSON.parse(row.weekdays) : null,
+    monthly_mode: row.monthly_mode,
+    monthly_day: row.monthly_day,
+    start_date: row.start_date,
+    end_date: row.end_date,
+    occurrence_count: row.occurrence_count,
+    idempotency_key: idempotencyKey,
+  };
 }

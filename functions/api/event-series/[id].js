@@ -5,7 +5,10 @@
 import { queryAll, queryOne, batch } from "../../_lib/db.js";
 import { ok, error } from "../../_lib/response.js";
 import { rowToEvent, nowIso } from "../../_lib/events.js";
-import { rowToSeries } from "../../_lib/recurrence.js";
+import { validateEventInput, validateEventTemporalOrder } from "../../_lib/events.js";
+import { generateInstances, rowToSeries, seriesRowToRequest, validateRecurringRequest } from "../../_lib/recurrence.js";
+import { activeEventCount, insertInstanceStatement, seriesFromRequest } from "../../_lib/series.js";
+import { getIdempotencyKey, getOperation, hashRequest, isUniqueConflict } from "../../_lib/operations.js";
 
 async function getActiveSeries(env, id) {
   return queryOne(
@@ -25,7 +28,132 @@ export async function onRequestGet(context) {
     "SELECT * FROM events WHERE series_id = ? AND deleted_at IS NULL ORDER BY start_time ASC",
     [params.id],
   );
-  return ok({ series: rowToSeries(series), events: events.map(rowToEvent) });
+  const exceptions = await queryAll(
+    env.DB,
+    "SELECT * FROM event_exceptions WHERE series_id = ? ORDER BY original_start_time ASC",
+    [params.id],
+  );
+  return ok({ series: rowToSeries(series), events: events.map(rowToEvent), exceptions });
+}
+
+const SERIES_PATCH_FIELDS = [
+  "title", "description", "category", "color", "group_title", "all_day",
+  "start_time", "end_time", "frequency", "interval", "weekdays",
+  "monthly_mode", "monthly_day", "start_date", "end_date", "occurrence_count",
+];
+
+async function seriesPatchResponse(env, seriesId) {
+  const series = await getActiveSeries(env, seriesId);
+  if (!series) return null;
+  return {
+    series_id: seriesId,
+    updated: true,
+    created_count: await activeEventCount(env, seriesId),
+  };
+}
+
+function operationConflict(operation, type, sourceId, requestHash) {
+  return !operation || operation.operation_type !== type ||
+    operation.source_series_id !== sourceId || operation.request_hash !== requestHash;
+}
+
+export async function onRequestPatch(context) {
+  const { request, env, params } = context;
+  const key = getIdempotencyKey(request);
+  if (!key) return error("validation_error", "Idempotency-Key header must be a UUID", 400);
+
+  const series = await getActiveSeries(env, params.id);
+  if (!series) return error("not_found", "Event series not found", 404);
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return error("validation_error", "Request body must be a JSON object", 400);
+  }
+
+  const requestHash = await hashRequest({ operation_type: "series_patch", series_id: params.id, body });
+  const existingOperation = await getOperation(env, key);
+  if (existingOperation) {
+    if (operationConflict(existingOperation, "series_patch", params.id, requestHash)) {
+      return error("conflict", "Idempotency-Key was already used for a different operation", 409);
+    }
+    return ok(await seriesPatchResponse(env, params.id));
+  }
+
+  const merged = seriesRowToRequest(series);
+  for (const field of SERIES_PATCH_FIELDS) {
+    if (body[field] !== undefined) merged[field] = body[field];
+  }
+  merged.idempotency_key = crypto.randomUUID();
+  const eventMessage = validateEventInput(merged, true);
+  if (eventMessage) return error("validation_error", eventMessage, 400);
+  const temporalMessage = validateEventTemporalOrder(merged);
+  if (temporalMessage) return error("validation_error", temporalMessage, 400);
+  const recurrenceMessage = validateRecurringRequest(merged);
+  if (recurrenceMessage) return error("validation_error", recurrenceMessage, 400);
+
+  let instances;
+  try {
+    instances = generateInstances(merged);
+  } catch (err) {
+    return error("validation_error", err.message || "Invalid recurrence rule", 400);
+  }
+
+  const exceptions = await queryAll(
+    env.DB,
+    "SELECT * FROM event_exceptions WHERE series_id = ?",
+    [params.id],
+  );
+  const occurrenceSet = new Set(instances.map((instance) => instance.start_time));
+  const validExceptions = exceptions.filter((exception) => occurrenceSet.has(exception.original_start_time));
+  const invalidExceptions = exceptions.filter((exception) => !occurrenceSet.has(exception.original_start_time));
+  const now = nowIso();
+  const updatedSeries = seriesFromRequest(merged, params.id, series.idempotency_key, now);
+  updatedSeries.created_at = series.created_at;
+  const statements = [
+    env.DB.prepare(`INSERT INTO event_operations
+      (idempotency_key, operation_type, source_series_id, result_series_id, request_hash, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .bind(key, "series_patch", params.id, null, requestHash, now),
+    env.DB.prepare(`UPDATE event_series SET
+      title = ?, description = ?, category = ?, color = ?, group_title = ?, all_day = ?,
+      start_time = ?, end_time = ?, frequency = ?, interval = ?, weekdays = ?, monthly_mode = ?,
+      monthly_day = ?, start_date = ?, end_date = ?, occurrence_count = ?, updated_at = ?
+      WHERE id = ? AND deleted_at IS NULL`)
+      .bind(
+        updatedSeries.title, updatedSeries.description, updatedSeries.category,
+        updatedSeries.color, updatedSeries.group_title, updatedSeries.all_day,
+        updatedSeries.start_time, updatedSeries.end_time, updatedSeries.frequency,
+        updatedSeries.interval, updatedSeries.weekdays, updatedSeries.monthly_mode,
+        updatedSeries.monthly_day, updatedSeries.start_date, updatedSeries.end_date,
+        updatedSeries.occurrence_count, now, params.id,
+      ),
+    env.DB.prepare("UPDATE events SET deleted_at = ?, updated_at = ? WHERE series_id = ? AND deleted_at IS NULL")
+      .bind(now, now, params.id),
+  ];
+  invalidExceptions.forEach((exception) => {
+    statements.push(env.DB.prepare("DELETE FROM event_exceptions WHERE id = ? AND series_id = ?")
+      .bind(exception.id, params.id));
+  });
+  const validExceptionSet = new Set(validExceptions.map((exception) => exception.original_start_time));
+  instances.forEach((instance, index) => {
+    if (!validExceptionSet.has(instance.start_time)) {
+      statements.push(insertInstanceStatement(env.DB, updatedSeries, instance, index, now));
+    }
+  });
+
+  try {
+    await batch(env.DB, statements);
+  } catch (err) {
+    if (isUniqueConflict(err)) {
+      const raced = await getOperation(env, key);
+      if (raced && !operationConflict(raced, "series_patch", params.id, requestHash)) {
+        return ok(await seriesPatchResponse(env, params.id));
+      }
+      if (raced) return error("conflict", "Idempotency-Key was already used for a different operation", 409);
+    }
+    throw err;
+  }
+
+  return ok(await seriesPatchResponse(env, params.id));
 }
 
 export async function onRequestDelete(context) {

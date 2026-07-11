@@ -37,7 +37,16 @@
 - [x] `GET /api/event-series/:id` 返回系列规则和未删除实例
 - [x] 删除单个系列实例不影响其他实例
 - [x] 删除整个系列使用 batch 软删除系列和全部实例
-- [ ] 前端 Repeat 弹窗在横屏 / 竖屏真实浏览器中视觉检查
+- [x] `POST /api/event-series/:id/exceptions` 跳过有效实例；系列详情返回 exception
+- [x] except 拒绝不属于规则的时间 → `not_an_occurrence`
+- [x] 删除 exception 恢复原实例
+- [x] `POST /api/event-series/:id/split` 切分日期系列，旧段后续实例不重复显示
+- [x] split 将后续 exceptions 迁移到新系列
+- [x] split 相同 `Idempotency-Key` 重试不重复切分
+- [x] `PATCH /api/event-series/:id` 重建实例并返回更新摘要
+- [x] PATCH 相同 `Idempotency-Key` 重试不重复重建
+- [x] PATCH 后不再匹配新规则的 exceptions 被清理
+- [x] 前端 Repeat 弹窗在横屏 / 竖屏真实浏览器中视觉检查
 
 ## 分类 (Categories)
 - [x] `GET /api/categories` 返回 8 个种子分类，颜色各异

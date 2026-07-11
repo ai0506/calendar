@@ -6,6 +6,7 @@ import { queryAll, run } from "../../_lib/db.js";
 import { ok, error } from "../../_lib/response.js";
 import {
   validateEventInput,
+  validateEventTemporalOrder,
   rowToEvent,
   nowIso,
   toIntBool,
@@ -52,6 +53,8 @@ export async function onRequestPost(context) {
 
   const msg = validateEventInput(body, true);
   if (msg) return error("validation_error", msg, 400);
+  const temporalMsg = validateEventTemporalOrder(body);
+  if (temporalMsg) return error("validation_error", temporalMsg, 400);
 
   const id = crypto.randomUUID();
   const now = nowIso();

@@ -6,7 +6,7 @@ const GRID_END_HOUR = 23;
 const HOUR_PX = 56;
 const FALLBACK_CATEGORY = {
   id: "cat-other",
-  name: "Other",
+  name: "Tech",
   color: "#8E8E93",
   sort_order: 999,
 };

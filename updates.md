@@ -165,3 +165,4 @@
 [ClaudeCode][260711175717] file updated
 [ClaudeCode][260711175724] 在 CLAUDE.md 和 AGENTS.md 中新增 `production/` 文件夹说明：用途（生产过程中的计划草稿、多方案待选文件等暂时性文件）、已被 .gitignore 排除、禁止用 git diff/log/status 判断其变化，需直接重读磁盘文件
 [ClaudeCode][260711175729] file updated
+[Codex][260711184348] Rewrote the default categories to Math, Physics, CS, Other Subjects, Research, Projects, Leisure, and Tech; added migrations to rename existing event categories, reorder them, and remove nonstandard categories; updated project docs and frontend fallback category.

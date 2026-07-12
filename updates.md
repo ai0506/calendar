@@ -398,4 +398,5 @@
 [Codex][260712233428] 修正正式 New 弹窗顶部结构：移除不属于静态预览设计的独立 New 标题，仅保留 Event/Deadline Tab，并改用无障碍 aria-label。
 [Codex][260712234536] 修复 Event/Deadline Tab 内容混排：为隐藏表单增加 display:none !important，确保 Event Tab 只显示 Event 字段，Deadline Tab 只显示 Deadline 字段。
 [Codex][260713001043] 按反馈调整正式前端细节：移除右侧 New deadline，顶部 New Event 改为 New，Event 创建按钮改为 Create，DDL 表单改为 Category 在前、Priority 在后，Inspector 预留稳定滚动条槽位，并将不足 24 小时的 DDL 相对时间改为小时。
+[Codex][260713001833] 移除 Inspector、竖屏详情和月视图日期格中的 Add Event 入口，创建 Event/Deadline 统一只使用顶部 New 按钮。
 [Codex][260712232601] 新增单次 Deadline 的 MCP 工具（查询、创建、读取、修改、删除、完成、重开），并同步更新 API_DOC.md 与 MCP_DEPLOY.md 的能力说明和使用约定。

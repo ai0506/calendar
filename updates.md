@@ -396,3 +396,4 @@
 [Codex][260712232420] 正式前端合并 DDL：统一 New 弹窗保留 Event 重复事件并新增 Deadline Tab；接入 deadlines 查询/创建/完成/重新打开 API；月/周/日/竖屏/Inspector 增加 DDL 展示、优先级、分类色、相对时间、到期线和浮层；保留固定弹窗布局与 Create 文案。
 [Codex][260712232554] 完成正式前端细节收尾：月视图按像素裁剪并显示 +more，周/日时间线补充 Event/DDL 浮层和到期标签堆叠，DDL 新建默认使用分类跟随颜色，完成语法、Chrome 静态渲染和 Deadline 单元测试验证。
 [Codex][260712232601] 新增单次 Deadline 的 MCP 工具（查询、创建、读取、修改、删除、完成、重开），并同步更新 API_DOC.md 与 MCP_DEPLOY.md 的能力说明和使用约定。
+[Codex][260713002108] 为 Deadline MCP 的 7 个工具增加 outputSchema，明确列表、DDL 对象和软删除结果的返回结构，帮助模型稳定理解工具输出。

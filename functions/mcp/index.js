@@ -133,6 +133,37 @@ const DEADLINE_WRITE_PROPERTIES = {
   external_id: { type: "string", description: "外部唯一标识（创建时可选）" },
 };
 
+const DEADLINE_OUTPUT_PROPERTIES = {
+  id: { type: "string" },
+  title: { type: "string" },
+  description: { type: ["string", "null"] },
+  due_time: { type: "string" },
+  all_day: { type: "boolean" },
+  category: { type: ["string", "null"] },
+  color: { type: ["string", "null"] },
+  group_title: { type: ["string", "null"] },
+  priority: { type: "string", enum: ["high", "default", "low"] },
+  source: { type: ["string", "null"] },
+  external_id: { type: ["string", "null"] },
+  created_at: { type: "string" },
+  updated_at: { type: "string" },
+  completed_at: { type: ["string", "null"] },
+  status: { type: "string", enum: ["open", "overdue", "completed"] },
+  is_overdue: { type: "boolean" },
+};
+
+const DEADLINE_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: DEADLINE_OUTPUT_PROPERTIES,
+  required: ["id", "title", "due_time", "all_day", "priority", "status", "is_overdue"],
+  additionalProperties: true,
+};
+
+const DEADLINE_LIST_OUTPUT_SCHEMA = {
+  type: "array",
+  items: DEADLINE_OUTPUT_SCHEMA,
+};
+
 const TOOLS = [
   {
     name: "list_events",
@@ -172,42 +203,54 @@ const TOOLS = [
       category: { type: "string", description: "分类名（可选）" },
       include_completed: { type: "boolean", description: "是否包含已完成项，默认 true" },
     }, additionalProperties: false },
+    outputSchema: DEADLINE_LIST_OUTPUT_SCHEMA,
   },
   {
     name: "create_deadline",
     description: "【需写权限】创建单次截止事项。priority 仅支持 high/default/low；暂不支持重复截止事项。",
     annotations: { readOnlyHint: false },
     inputSchema: { type: "object", properties: DEADLINE_WRITE_PROPERTIES, required: ["title", "due_time"], additionalProperties: false },
+    outputSchema: DEADLINE_OUTPUT_SCHEMA,
   },
   {
     name: "get_deadline",
     description: "【只读】按 id 读取单个活动截止事项。",
     annotations: { readOnlyHint: true },
     inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" } }, required: ["id"], additionalProperties: false },
+    outputSchema: DEADLINE_OUTPUT_SCHEMA,
   },
   {
     name: "update_deadline",
     description: "【需写权限】修改截止事项；source 和 external_id 创建后不可修改，只传需要修改的字段。",
     annotations: { readOnlyHint: false },
     inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" }, ...DEADLINE_WRITE_PROPERTIES }, required: ["id"], additionalProperties: false },
+    outputSchema: DEADLINE_OUTPUT_SCHEMA,
   },
   {
     name: "delete_deadline",
     description: "【需写权限】软删除一个截止事项。",
     annotations: { readOnlyHint: false, destructiveHint: true },
     inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" } }, required: ["id"], additionalProperties: false },
+    outputSchema: {
+      type: "object",
+      properties: { id: { type: "string" }, deleted: { type: "boolean" } },
+      required: ["id", "deleted"],
+      additionalProperties: false,
+    },
   },
   {
     name: "complete_deadline",
     description: "【需写权限】将截止事项标记为已完成；重复调用幂等。",
     annotations: { readOnlyHint: false },
     inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" } }, required: ["id"], additionalProperties: false },
+    outputSchema: DEADLINE_OUTPUT_SCHEMA,
   },
   {
     name: "reopen_deadline",
     description: "【需写权限】重新打开已完成的截止事项；重复调用幂等。",
     annotations: { readOnlyHint: false },
     inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" } }, required: ["id"], additionalProperties: false },
+    outputSchema: DEADLINE_OUTPUT_SCHEMA,
   },
   {
     name: "create_event",
@@ -1092,7 +1135,9 @@ async function handleMessage(request, env, msg) {
         const args = params?.arguments ?? {};
         try {
           const data = await callTool(env, name, args);
-          return rpcResult(id, { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] });
+          const toolResult = { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+          if (TOOLS.find((tool) => tool.name === name)?.outputSchema) toolResult.structuredContent = data;
+          return rpcResult(id, toolResult);
         } catch (toolErr) {
           return toolError(id, `工具执行失败：${toolErr.message}`);
         }

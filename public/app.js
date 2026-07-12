@@ -583,7 +583,6 @@ function renderPortraitDetail() {
     const events = sortEvents(getEventsFor(date));
     els.inspector.innerHTML = head +
       `<div class="pd-scroll">
-         <button type="button" class="inspector-add" data-open-date="${isoKey(date)}">+ Add event on this day</button>
          ${ddlRailHTML()}
          <div class="agenda-list">
            ${events.length ? events.map((event) => agendaItemHTML(event, date)).join("") : '<div class="inspector-empty">No events on this day.</div>'}
@@ -610,7 +609,6 @@ function renderMonth() {
     cells += `<div class="cell ${date.getMonth() !== month ? "other-month" : ""} ${sameDay(date, today()) ? "is-today" : ""} ${sameDay(date, selectedDate) ? "is-selected" : ""}" data-date="${iso}">
       <div class="cell-top">
         <span class="date-num">${date.getDate()}</span>
-        <button type="button" class="cell-add" data-open-date="${iso}">+</button>
       </div>
       <div class="events">
         ${shown.map((item) => item.type === "deadline"
@@ -624,12 +622,6 @@ function renderMonth() {
     <div class="weekday-row"><div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div></div>
     <div class="month-grid">${cells}</div>`;
   els.calCol.querySelectorAll(".cell").forEach((cell) => cell.addEventListener("click", () => selectDay(cell.dataset.date)));
-  els.calCol.querySelectorAll(".cell-add").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      openModal(button.dataset.openDate);
-    });
-  });
   bindCalendarDeadlineActions(els.calCol);
   trimMonthCells();
 }
@@ -760,7 +752,6 @@ function renderInspector() {
     <div class="inspector-title">${date.toLocaleDateString("en-US", { month: "long", day: "numeric" })}</div>
     <div class="inspector-sub">${events.length} event${events.length !== 1 ? "s" : ""} on this day</div>
     ${ddlRailHTML()}
-    <button type="button" class="inspector-add" data-open-date="${isoKey(date)}">+ Add event on this day</button>
     <div class="agenda-list">
       ${events.length ? events.map((event) => agendaItemHTML(event, date)).join("") : '<div class="inspector-empty">No events on this day.</div>'}
     </div>
@@ -775,9 +766,6 @@ function renderInspector() {
 }
 
 function bindInspectorActions(root) {
-  root.querySelectorAll("[data-open-date]").forEach((button) => {
-    button.addEventListener("click", () => openModal(button.dataset.openDate));
-  });
   root.querySelectorAll("[data-tab]").forEach((button) => {
     button.addEventListener("click", () => setPortraitTab(button.dataset.tab));
   });

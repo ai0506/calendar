@@ -19,6 +19,10 @@ let portraitTab = "preview";
 let categories = [];
 let activeFilters = new Set();
 let eventsByDate = new Map();
+let deadlinesByDate = new Map();
+let newModalTab = "event";
+let ddlSelectedCat = null;
+let ddlPriority = "default";
 let refreshTimer = null;
 let clockTimer = null;
 let refreshInFlight = false;
@@ -26,6 +30,7 @@ let lastRangeKey = "";
 const rangeCache = new Map();
 const RANGE_CACHE_LIMIT = 6;
 let pendingDelete = null;
+let pendingDeadlineAction = null;
 let repeatIdempotencyKey = null;
 let repeatWeekdayTouched = false;
 let toastTimer = null;
@@ -59,6 +64,9 @@ function cacheElements() {
     loginButton: document.getElementById("loginButton"),
     eventScrim: document.getElementById("eventScrim"),
     eventForm: document.getElementById("eventForm"),
+    ddlForm: document.getElementById("ddlForm"),
+    ntEvent: document.getElementById("ntEvent"),
+    ntDdl: document.getElementById("ntDdl"),
     createButton: document.getElementById("createButton"),
     fTitle: document.getElementById("fTitle"),
     fDate: document.getElementById("fDate"),
@@ -78,12 +86,26 @@ function cacheElements() {
     fRepeatCount: document.getElementById("fRepeatCount"),
     repeatPreview: document.getElementById("repeatPreview"),
     repeatError: document.getElementById("repeatError"),
+    dTitle: document.getElementById("dTitle"),
+    dDate: document.getElementById("dDate"),
+    dTime: document.getElementById("dTime"),
+    dTimeField: document.getElementById("dTimeField"),
+    dAllday: document.getElementById("dAllday"),
+    dCatSwatches: document.getElementById("dCatSwatches"),
+    priSeg: document.getElementById("priSeg"),
+    createDdlButton: document.getElementById("createDdlButton"),
     confirmScrim: document.getElementById("confirmScrim"),
     confirmTitle: document.getElementById("confirmTitle"),
     confirmDeleteButton: document.getElementById("confirmDeleteButton"),
     seriesDeleteActions: document.getElementById("seriesDeleteActions"),
     deleteThisButton: document.getElementById("deleteThisButton"),
     deleteSeriesButton: document.getElementById("deleteSeriesButton"),
+    completeScrim: document.getElementById("completeScrim"),
+    completeTitle: document.getElementById("completeTitle"),
+    confirmCompleteButton: document.getElementById("confirmCompleteButton"),
+    reopenScrim: document.getElementById("reopenScrim"),
+    reopenTitle: document.getElementById("reopenTitle"),
+    confirmReopenButton: document.getElementById("confirmReopenButton"),
     toast: document.getElementById("toast"),
   });
 }
@@ -93,11 +115,24 @@ function bindEvents() {
   document.querySelector("[data-action='navigate'][data-dir='1']").addEventListener("click", () => navigate(1));
   document.querySelector("[data-action='today']").addEventListener("click", goToday);
   document.querySelector("[data-action='open-event']").addEventListener("click", () => openModal());
-  document.querySelector("[data-action='close-event']").addEventListener("click", closeModal);
+  document.querySelectorAll("[data-action='close-event']").forEach((button) => button.addEventListener("click", closeModal));
   document.querySelector("[data-action='close-confirm']").addEventListener("click", closeConfirm);
+  document.querySelector("[data-action='close-complete']").addEventListener("click", closeComplete);
+  document.querySelector("[data-action='close-reopen']").addEventListener("click", closeReopen);
   els.confirmDeleteButton.addEventListener("click", () => confirmDelete("event"));
   els.deleteThisButton.addEventListener("click", () => confirmDelete("event"));
   els.deleteSeriesButton.addEventListener("click", () => confirmDelete("series"));
+  els.confirmCompleteButton.addEventListener("click", confirmComplete);
+  els.confirmReopenButton.addEventListener("click", confirmReopen);
+
+  els.ntEvent.addEventListener("click", () => setNewTab("event"));
+  els.ntDdl.addEventListener("click", () => setNewTab("ddl"));
+  els.ddlForm.addEventListener("submit", submitDeadline);
+  els.dAllday.addEventListener("change", toggleDdlAllDay);
+  els.priSeg.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-priority]");
+    if (button) selectDdlPriority(button.dataset.priority);
+  });
 
   els.viewToggle.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-view]");
@@ -127,6 +162,12 @@ function bindEvents() {
   });
   els.confirmScrim.addEventListener("click", (event) => {
     if (event.target === els.confirmScrim) closeConfirm();
+  });
+  els.completeScrim.addEventListener("click", (event) => {
+    if (event.target === els.completeScrim) closeComplete();
+  });
+  els.reopenScrim.addEventListener("click", (event) => {
+    if (event.target === els.reopenScrim) closeReopen();
   });
 
   let resizeTimer = null;
@@ -280,16 +321,21 @@ async function refreshVisibleData({ silent = true, force = false } = {}) {
   refreshInFlight = true;
   try {
     const url = `/api/events?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`;
-    const json = await apiFetch(url);
+    const deadlineFrom = addDateKey(range.from.slice(0, 10), -3);
+    const deadlineTo = addDateKey(range.to.slice(0, 10), 3);
+    const deadlineUrl = `/api/deadlines?from=${encodeURIComponent(deadlineFrom)}&to=${encodeURIComponent(deadlineTo)}&include_completed=true`;
+    const [json, deadlineJson] = await Promise.all([apiFetch(url), apiFetch(deadlineUrl)]);
     const rows = json.data || [];
+    const deadlineRows = deadlineJson.data || [];
     rangeCache.set(rangeKey, rows);
     trimRangeCache();
     applyEvents(rows);
+    applyDeadlines(deadlineRows);
     lastRangeKey = rangeKey;
     render();
     prefetchAdjacentRanges();
   } catch (err) {
-    if (err.message !== "Authentication required" && silent) showToast("Sync failed. Keeping current events.");
+    if (err.message !== "Authentication required" && silent) showToast("Sync failed. Keeping current calendar.");
     if (!silent && err.message !== "Authentication required") showToast(err.message || "Failed to load events.");
   } finally {
     refreshInFlight = false;
@@ -334,6 +380,43 @@ function applyEvents(rows) {
     list.sort((a, b) => a.start.localeCompare(b.start) || a.title.localeCompare(b.title));
   }
   eventsByDate = next;
+}
+
+function applyDeadlines(rows) {
+  const next = new Map();
+  for (const row of rows) {
+    const deadline = adaptDeadline(row);
+    if (!deadline) continue;
+    if (!next.has(deadline.dateKey)) next.set(deadline.dateKey, []);
+    next.get(deadline.dateKey).push(deadline);
+  }
+  for (const list of next.values()) list.sort((a, b) => Number(a.allDay) - Number(b.allDay) || a.dueMs - b.dueMs || a.title.localeCompare(b.title));
+  deadlinesByDate = next;
+}
+
+function adaptDeadline(row) {
+  if (!row || !row.id || !row.due_time) return null;
+  const dateKey = row.due_time.slice(0, 10);
+  const categoryName = row.category || FALLBACK_CATEGORY.name;
+  const category = getCategory(categoryName);
+  const color = !row.color || String(row.color).toLowerCase() === "default" ? category.color : row.color;
+  const allDay = Boolean(row.all_day);
+  const time = allDay ? null : row.due_time.slice(11, 16);
+  const dueMs = allDay ? new Date(`${dateKey}T23:59:59`).getTime() : Date.parse(row.due_time);
+  return {
+    id: row.id,
+    title: row.title || "Untitled",
+    dateKey,
+    time,
+    allDay,
+    dueMs,
+    cat: categoryName,
+    color,
+    bg: colorToSoftBg(color),
+    priority: row.priority || "default",
+    status: row.status || (row.completed_at ? "completed" : row.is_overdue ? "overdue" : "open"),
+    completedAt: row.completed_at || null,
+  };
 }
 
 function adaptEvent(row) {
@@ -469,7 +552,8 @@ function renderPortraitMonth() {
     const date = addDays(start, i);
     const iso = isoKey(date);
     const events = getEventsFor(date);
-    const marks = `<div class="pm-dots">${events.slice(0, 4).map((event) => `<div class="pm-dot" style="background:${event.color}"></div>`).join("")}</div>`;
+    const deadlines = getDeadlinesFor(date);
+    const marks = `<div class="pm-dots">${events.slice(0, 3).map((event) => `<div class="pm-dot" style="background:${event.color}"></div>`).join("")}${deadlines.slice(0, 2).map((deadline) => `<div class="pm-dot pm-ddl-dot" style="background:${deadlineColor(deadline)}"></div>`).join("")}</div>`;
     cells += `<button type="button" class="pm-cell ${date.getMonth() !== month ? "other" : ""} ${sameDay(date, today()) ? "today" : ""} ${sameDay(date, selectedDate) ? "sel" : ""}" data-date="${iso}">
       <span class="pm-date">${date.getDate()}</span>${marks}
     </button>`;
@@ -500,6 +584,7 @@ function renderPortraitDetail() {
     els.inspector.innerHTML = head +
       `<div class="pd-scroll">
          <button type="button" class="inspector-add" data-open-date="${isoKey(date)}">+ Add event on this day</button>
+         ${ddlRailHTML()}
          <div class="agenda-list">
            ${events.length ? events.map((event) => agendaItemHTML(event, date)).join("") : '<div class="inspector-empty">No events on this day.</div>'}
          </div>
@@ -518,15 +603,19 @@ function renderMonth() {
     const date = addDays(start, i);
     const iso = isoKey(date);
     const events = sortEvents(getEventsFor(date));
-    const shown = events.slice(0, 3);
-    const more = events.length - 3;
+    const deadlines = getDeadlinesFor(date);
+    const items = [...deadlines.map((deadline) => ({ type: "deadline", value: deadline })), ...events.map((event) => ({ type: "event", value: event }))];
+    const shown = items;
+    const more = 0;
     cells += `<div class="cell ${date.getMonth() !== month ? "other-month" : ""} ${sameDay(date, today()) ? "is-today" : ""} ${sameDay(date, selectedDate) ? "is-selected" : ""}" data-date="${iso}">
       <div class="cell-top">
         <span class="date-num">${date.getDate()}</span>
         <button type="button" class="cell-add" data-open-date="${iso}">+</button>
       </div>
       <div class="events">
-        ${shown.map((event) => `<div class="event-chip ${isOngoing(event, date) ? "ongoing" : ""}" style="background:${event.bg}; color:${event.color}">${eventTitleHTML(event)}</div>`).join("")}
+        ${shown.map((item) => item.type === "deadline"
+          ? `<div class="ddl-chip ${item.value.status === "completed" ? "done" : item.value.status}" style="--ddl-color:${deadlineColor(item.value)};--ddl-bg:${item.value.bg}" data-deadline-id="${escapeAttr(item.value.id)}" title="${escapeAttr(item.value.title)}">⚑ ${escapeHtml(item.value.title)}</div>`
+          : `<div class="event-chip ${isOngoing(item.value, date) ? "ongoing" : ""}" style="background:${item.value.bg}; color:${item.value.color}" data-open-day="${iso}">${eventTitleHTML(item.value)}</div>`).join("")}
         ${more > 0 ? `<div class="more-link">+${more} more</div>` : ""}
       </div>
     </div>`;
@@ -541,6 +630,125 @@ function renderMonth() {
       openModal(button.dataset.openDate);
     });
   });
+  bindCalendarDeadlineActions(els.calCol);
+  trimMonthCells();
+}
+
+function trimMonthCells() {
+  els.calCol.querySelectorAll(".month-grid .cell").forEach((cell) => {
+    const events = cell.querySelector(".events");
+    if (!events) return;
+    const items = [...events.querySelectorAll(".event-chip,.ddl-chip")];
+    items.forEach((item) => { item.style.display = ""; });
+    const top = cell.querySelector(".cell-top");
+    const styles = getComputedStyle(cell);
+    const available = cell.clientHeight - (top?.offsetHeight || 0) - parseFloat(styles.paddingTop) - parseFloat(styles.paddingBottom) - 4;
+    const moreHeight = 15;
+    let used = 0;
+    let show = items.length;
+    for (let i = 0; i < items.length; i += 1) {
+      const height = items[i].offsetHeight + 3;
+      if (used + height + moreHeight > available) { show = i; break; }
+      used += height;
+    }
+    if (show >= items.length) return;
+    if (show < 1) show = 1;
+    items.slice(show).forEach((item) => { item.style.display = "none"; });
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "more-link";
+    more.textContent = `+${items.length - show} more`;
+    more.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openDayPopover(cell.dataset.date, more);
+    });
+    events.appendChild(more);
+  });
+}
+
+function bindCalendarDeadlineActions(root) {
+  root.querySelectorAll("[data-open-day]").forEach((item) => {
+    item.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openDayPopover(item.dataset.openDay, item);
+    });
+  });
+  root.querySelectorAll("[data-open-event]").forEach((item) => {
+    item.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openEventPopover(item.dataset.openEvent, item.dataset.eventDate, item);
+    });
+  });
+  root.querySelectorAll("[data-deadline-id]").forEach((item) => {
+    item.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleDeadline(item.dataset.deadlineId);
+    });
+  });
+}
+
+function ensurePopover() {
+  if (document.getElementById("calendarPopoverScrim")) return;
+  const scrim = document.createElement("div");
+  scrim.className = "pop-scrim";
+  scrim.id = "calendarPopoverScrim";
+  scrim.addEventListener("click", closePopover);
+  const pop = document.createElement("div");
+  pop.className = "pop";
+  pop.id = "calendarPopover";
+  pop.addEventListener("click", (event) => event.stopPropagation());
+  scrim.appendChild(pop);
+  document.body.appendChild(scrim);
+}
+
+function closePopover() {
+  document.getElementById("calendarPopoverScrim")?.classList.remove("open");
+}
+
+function openPopover(anchor, html) {
+  ensurePopover();
+  const scrim = document.getElementById("calendarPopoverScrim");
+  const pop = document.getElementById("calendarPopover");
+  pop.innerHTML = html;
+  scrim.classList.add("open");
+  pop.style.visibility = "hidden";
+  const rect = anchor.getBoundingClientRect();
+  requestAnimationFrame(() => {
+    const left = Math.min(Math.max(12, rect.left), window.innerWidth - pop.offsetWidth - 12);
+    const below = rect.bottom + 6;
+    const top = below + pop.offsetHeight <= window.innerHeight - 12 ? below : Math.max(12, rect.top - pop.offsetHeight - 6);
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+    pop.style.visibility = "visible";
+    pop.querySelectorAll("[data-deadline-id]").forEach((item) => item.addEventListener("click", () => toggleDeadline(item.dataset.deadlineId)));
+  });
+}
+
+function dayPopoverHTML(iso) {
+  const date = parseDateKey(iso);
+  const events = sortEvents(getEventsFor(date));
+  const deadlines = getDeadlinesFor(date);
+  return `<h4>${date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</h4>
+    <div class="pop-sec">Deadlines · ${deadlines.length}</div>
+    ${deadlines.length ? deadlines.map((deadline) => `<div class="pop-row pop-ddl ${deadline.status === "completed" ? "done" : deadline.status}" data-deadline-id="${escapeAttr(deadline.id)}"><span class="pop-dot" style="background:${deadlineColor(deadline)}"></span><span class="pt" title="${escapeAttr(deadline.title)}">⚑ ${escapeHtml(deadline.title)}</span><span class="pm">${deadline.status === "completed" ? "Reopen" : deadline.allDay ? "All-day" : deadline.time}</span></div>`).join("") : '<div class="pop-empty">None</div>'}
+    <div class="pop-sec">Events · ${events.length}</div>
+    ${events.length ? events.map((event) => `<div class="pop-row"><span class="pop-dot" style="background:${event.color}"></span><span class="pt">${eventTitleHTML(event)}</span><span class="pm">${isAllDayEvent(event) ? "All-day" : event.start}</span></div>`).join("") : '<div class="pop-empty">None</div>'}`;
+}
+
+function openDayPopover(iso, anchor) {
+  openPopover(anchor, dayPopoverHTML(iso));
+}
+
+function openEventPopover(id, iso, anchor) {
+  const event = getEventsFor(parseDateKey(iso)).find((item) => item.id === id);
+  if (!event) return;
+  openPopover(anchor, `<h4>${eventTitleHTML(event)}</h4><div class="pop-row"><span class="pop-dot" style="background:${event.color}"></span><span class="pt">${escapeHtml(event.cat)}</span></div><div class="pop-row"><span class="pt">${isAllDayEvent(event) ? "All-day" : `${event.start} - ${event.end}`}</span></div>`);
+}
+
+function openQuickPopover(anchor) {
+  const quick = quickDeadlines();
+  const html = `<h4>Due soon · ${quick.length}</h4>${quick.length ? quick.map((deadline) => `<div class="pop-row pop-ddl ${deadline.status === "completed" ? "done" : deadline.status}" data-deadline-id="${escapeAttr(deadline.id)}"><span class="pop-dot" style="background:${deadlineColor(deadline)}"></span><span class="pt" title="${escapeAttr(deadline.title)}">⚑ ${escapeHtml(deadline.title)}</span><span class="pm">${deadlineDueText(deadline)}</span></div>`).join("") : '<div class="pop-empty">None</div>'}`;
+  openPopover(anchor, html);
 }
 
 function renderInspector() {
@@ -550,7 +758,8 @@ function renderInspector() {
   els.inspector.innerHTML = `
     <div class="inspector-eyebrow">${isToday ? "Today" : date.toLocaleDateString("en-US", { weekday: "long" })}</div>
     <div class="inspector-title">${date.toLocaleDateString("en-US", { month: "long", day: "numeric" })}</div>
-    <div class="inspector-sub">${events.length} event${events.length !== 1 ? "s" : ""} scheduled</div>
+    <div class="inspector-sub">${events.length} event${events.length !== 1 ? "s" : ""} on this day</div>
+    ${ddlRailHTML()}
     <button type="button" class="inspector-add" data-open-date="${isoKey(date)}">+ Add event on this day</button>
     <div class="agenda-list">
       ${events.length ? events.map((event) => agendaItemHTML(event, date)).join("") : '<div class="inspector-empty">No events on this day.</div>'}
@@ -581,6 +790,15 @@ function bindInspectorActions(root) {
   root.querySelectorAll("[data-category]").forEach((item) => {
     item.addEventListener("click", () => toggleFilter(item.dataset.category));
   });
+  root.querySelectorAll("[data-deadline-id]").forEach((item) => {
+    item.addEventListener("click", () => toggleDeadline(item.dataset.deadlineId));
+  });
+  root.querySelectorAll("[data-open-deadline]").forEach((button) => {
+    button.addEventListener("click", () => openDeadlineModal());
+  });
+  root.querySelectorAll("[data-open-quick]").forEach((button) => {
+    button.addEventListener("click", () => openQuickPopover(button));
+  });
 }
 
 function toggleFilter(name) {
@@ -610,6 +828,7 @@ function renderWeek() {
       ${buildTimeGridHTML(days)}
     </div>`;
   bindTimelineDeletes();
+  bindCalendarDeadlineActions(els.calCol);
 }
 
 function renderDay() {
@@ -625,15 +844,18 @@ function renderDay() {
       ${buildTimeGridHTML([viewDate])}
     </div>`;
   bindTimelineDeletes();
+  bindCalendarDeadlineActions(els.calCol);
 }
 
 function buildAllDayRowHTML(days) {
-  const anyAllDay = days.some((date) => getEventsFor(date).some(isAllDayEvent));
+  const anyAllDay = days.some((date) => getEventsFor(date).some(isAllDayEvent) || getDeadlinesFor(date).some((deadline) => deadline.allDay));
   if (!anyAllDay) return "";
   const cells = days.map((date) => {
     const events = getEventsFor(date).filter(isAllDayEvent);
-    return `<div class="allday-cell">${events.map((event) => `
-      <div class="allday-chip" style="background:${event.bg};color:${event.color}">
+    const deadlines = getDeadlinesFor(date).filter((deadline) => deadline.allDay);
+    return `<div class="allday-cell">${deadlines.map((deadline) => `
+      <div class="allday-ddl ${deadline.status === "completed" ? "done" : deadline.status}" style="--ddl-color:${deadlineColor(deadline)};--ddl-bg:${deadline.bg}" data-deadline-id="${escapeAttr(deadline.id)}" title="${escapeAttr(deadline.title)}">⚑ ${escapeHtml(deadline.title)}</div>`).join("")}${events.map((event) => `
+      <div class="allday-chip" data-open-event="${escapeAttr(event.id)}" data-event-date="${isoKey(date)}" style="background:${event.bg};color:${event.color}">
         <span class="t">${eventTitleHTML(event)}</span>
         <button type="button" class="allday-delete" data-delete-id="${event.id}" data-delete-title="${escapeAttr(event.title)}" data-series-id="${escapeAttr(event.seriesId || "")}">x</button>
       </div>`).join("")}</div>`;
@@ -657,15 +879,28 @@ function buildTimeGridHTML(days) {
       const height = Math.max(timeToMin(event.end) - timeToMin(event.start), 26);
       const widthPct = 100 / event.cols;
       const leftPct = event.col * widthPct;
-      return `<div class="tl-event ${isOngoing(event, date) ? "ongoing" : ""}" style="top:${top}px;height:${height}px;left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);background:${event.bg};color:${event.color}">
-        <span class="t">${eventTitleHTML(event)}</span><span class="tm">${event.start} - ${event.end}${isOngoing(event, date) ? '<span class="now-badge">Now</span>' : ""}</span>
+      return `<div class="tl-event ${isOngoing(event, date) ? "ongoing" : ""}" data-open-event="${escapeAttr(event.id)}" data-event-date="${isoKey(date)}" style="top:${top}px;height:${height}px;left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);background:${event.bg};color:${event.color}">
+        <span class="t">${eventTitleHTML(event)}</span><span class="tm">${event.start} - ${event.end}${eventRelativeLabel(event, date) ? ` · <span class="event-relative">${eventRelativeLabel(event, date)}</span>` : ""}${isOngoing(event, date) ? '<span class="now-badge">Now</span>' : ""}</span>
         <button type="button" class="tl-delete" data-delete-id="${event.id}" data-delete-title="${escapeAttr(event.title)}" data-series-id="${escapeAttr(event.seriesId || "")}">x</button>
       </div>`;
+    }).join("");
+    let lastDeadlineMins = -999;
+    let deadlineStack = 0;
+    const deadlineLines = getDeadlinesFor(date).filter((deadline) => !deadline.allDay).sort((a, b) => a.dueMs - b.dueMs).map((deadline) => {
+      const mins = timeToMin(deadline.time) - GRID_START_HOUR * 60;
+      if (mins < 0 || mins > (GRID_END_HOUR - GRID_START_HOUR + 1) * 60) return "";
+      if (mins - lastDeadlineMins < 16) deadlineStack += 1;
+      else deadlineStack = 0;
+      lastDeadlineMins = mins;
+      const statusClass = deadline.status === "completed" ? "done" : "";
+      const labelTop = -9 - deadlineStack * 15;
+      const labelZ = 10 + deadlineStack;
+      return `<div class="tl-ddl-line ${statusClass}" style="top:${mins}px;border-top-color:${deadlineColor(deadline)}"><span class="tl-ddl-label" title="${escapeAttr(deadline.title)} · ${escapeAttr(deadline.time || "")}" style="top:${labelTop}px;z-index:${labelZ};color:${deadlineColor(deadline)}" data-deadline-id="${escapeAttr(deadline.id)}">⚑ ${escapeHtml(deadline.title)} · ${deadline.time}${deadline.status === "overdue" ? " ⚠" : ""}</span></div>`;
     }).join("");
     const nowLine = sameDay(date, today()) && now >= GRID_START_HOUR * 60 && now <= GRID_END_HOUR * 60
       ? `<div class="now-line" style="top:${now - GRID_START_HOUR * 60}px"></div>`
       : "";
-    return `<div class="day-col-body">${blocks}${nowLine}</div>`;
+    return `<div class="day-col-body">${blocks}${deadlineLines}${nowLine}</div>`;
   }).join("");
 
   const totalHeight = (GRID_END_HOUR - GRID_START_HOUR + 1) * HOUR_PX;
@@ -692,7 +927,7 @@ function agendaItemHTML(event, date) {
     <div class="agenda-bar" style="background:${event.color}"></div>
     <div class="agenda-body">
       <div class="agenda-title">${eventTitleHTML(event)}</div>
-      <div class="agenda-time">${isAllDayEvent(event) ? "All-day" : `${event.start} - ${event.end}`}${isOngoing(event, date) ? '<span class="now-badge">Now</span>' : ""}</div>
+      <div class="agenda-time">${isAllDayEvent(event) ? "All-day" : `${event.start} - ${event.end}`}${eventRelativeLabel(event, date) ? `<span class="event-relative"> · ${eventRelativeLabel(event, date)}</span>` : ""}${isOngoing(event, date) ? '<span class="now-badge">Now</span>' : ""}</div>
       <span class="agenda-cat" style="color:${event.color}">${escapeHtml(event.cat)}</span>
     </div>
     <button type="button" class="agenda-delete" data-delete-id="${event.id}" data-delete-title="${escapeAttr(event.title)}" data-series-id="${escapeAttr(event.seriesId || "")}">x</button>
@@ -753,6 +988,7 @@ function renderSwatches() {
 }
 
 function openModal(prefillIso) {
+  setNewTab("event");
   els.fTitle.value = "";
   els.fDate.value = prefillIso || isoKey(selectedDate);
   els.fAllday.checked = false;
@@ -771,8 +1007,86 @@ function openModal(prefillIso) {
   renderSwatches();
   syncRepeatUI();
   els.createButton.disabled = false;
+  prepareDeadlineForm(prefillIso);
   els.eventScrim.classList.add("open");
   setTimeout(() => els.fTitle.focus(), 100);
+}
+
+function setNewTab(tab) {
+  newModalTab = tab === "ddl" ? "ddl" : "event";
+  const eventActive = newModalTab === "event";
+  els.ntEvent.classList.toggle("active", eventActive);
+  els.ntDdl.classList.toggle("active", !eventActive);
+  els.ntEvent.setAttribute("aria-selected", String(eventActive));
+  els.ntDdl.setAttribute("aria-selected", String(!eventActive));
+  els.eventForm.hidden = !eventActive;
+  els.ddlForm.hidden = eventActive;
+  if (eventActive) setTimeout(() => els.fTitle.focus(), 50);
+  else setTimeout(() => els.dTitle.focus(), 50);
+}
+
+function openDeadlineModal(prefillIso) {
+  openModal(prefillIso || isoKey(selectedDate));
+  setNewTab("ddl");
+}
+
+function prepareDeadlineForm(prefillIso) {
+  els.dTitle.value = "";
+  els.dDate.value = prefillIso || isoKey(selectedDate);
+  els.dTime.value = "18:00";
+  els.dAllday.checked = false;
+  ddlSelectedCat = selectedCat || categories[0]?.name || FALLBACK_CATEGORY.name;
+  ddlPriority = "default";
+  toggleDdlAllDay();
+  renderDdlSwatches();
+  selectDdlPriority("default");
+  els.createDdlButton.disabled = false;
+  els.createDdlButton.textContent = "Create";
+}
+
+function renderDdlSwatches() {
+  els.dCatSwatches.innerHTML = categories.map((category) => `<button type="button" class="swatch ${category.name === ddlSelectedCat ? "selected" : ""}" style="background:${category.color}" data-ddl-cat="${escapeAttr(category.name)}" title="${escapeAttr(category.name)}" aria-label="${escapeAttr(category.name)}"></button>`).join("");
+  els.dCatSwatches.querySelectorAll("[data-ddl-cat]").forEach((button) => button.addEventListener("click", () => {
+    ddlSelectedCat = button.dataset.ddlCat;
+    renderDdlSwatches();
+  }));
+}
+
+function selectDdlPriority(priority) {
+  if (!["high", "default", "low"].includes(priority)) return;
+  ddlPriority = priority;
+  els.priSeg.querySelectorAll("button[data-priority]").forEach((button) => button.classList.toggle("sel", button.dataset.priority === priority));
+}
+
+function toggleDdlAllDay() {
+  const disabled = els.dAllday.checked;
+  els.dTimeField.style.opacity = disabled ? "0.35" : "1";
+  els.dTimeField.style.pointerEvents = disabled ? "none" : "auto";
+}
+
+async function submitDeadline(event) {
+  event.preventDefault();
+  const title = els.dTitle.value.trim();
+  if (!title || !els.dDate.value) return;
+  const allDay = els.dAllday.checked;
+  const category = getCategory(ddlSelectedCat);
+  const due_time = allDay ? els.dDate.value : toLocalIso(parseDateKey(els.dDate.value), els.dTime.value || "18:00");
+  els.createDdlButton.disabled = true;
+  try {
+    await apiFetch("/api/deadlines", {
+      method: "POST",
+      body: JSON.stringify({ title, due_time, all_day: allDay, category: category.name, color: "default", priority: ddlPriority, source: "web" }),
+    });
+    selectedDate = parseDateKey(els.dDate.value);
+    viewDate = parseDateKey(els.dDate.value);
+    closeModal();
+    showToast("Deadline created");
+    await refreshVisibleData({ silent: false, force: true });
+  } catch (err) {
+    showToast(err.message || "Failed to create deadline.");
+  } finally {
+    els.createDdlButton.disabled = false;
+  }
 }
 
 function closeModal() {
@@ -1061,6 +1375,130 @@ function calculateRepeatPreview({ frequency, startDate, weekdays, endDate, occur
 
 function getEventsFor(date) {
   return (eventsByDate.get(isoKey(date)) || []).filter((event) => activeFilters.has(event.cat));
+}
+
+function findDeadline(id) {
+  for (const list of deadlinesByDate.values()) {
+    const found = list.find((deadline) => deadline.id === id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function toggleDeadline(id) {
+  closePopover();
+  const deadline = findDeadline(id);
+  if (!deadline) return;
+  pendingDeadlineAction = id;
+  if (deadline.status === "completed") {
+    els.reopenTitle.textContent = deadline.title;
+    els.reopenScrim.classList.add("open");
+  } else {
+    els.completeTitle.textContent = deadline.title;
+    els.completeScrim.classList.add("open");
+  }
+}
+
+function closeComplete() {
+  els.completeScrim.classList.remove("open");
+  pendingDeadlineAction = null;
+}
+
+function closeReopen() {
+  els.reopenScrim.classList.remove("open");
+  pendingDeadlineAction = null;
+}
+
+async function confirmComplete() {
+  if (!pendingDeadlineAction) return;
+  const id = pendingDeadlineAction;
+  els.confirmCompleteButton.disabled = true;
+  try {
+    await apiFetch(`/api/deadlines/${encodeURIComponent(id)}/complete`, { method: "POST" });
+    closeComplete();
+    showToast("Deadline completed");
+    await refreshVisibleData({ silent: false, force: true });
+  } catch (err) {
+    showToast(err.message || "Failed to complete deadline.");
+  } finally {
+    els.confirmCompleteButton.disabled = false;
+  }
+}
+
+async function confirmReopen() {
+  if (!pendingDeadlineAction) return;
+  const id = pendingDeadlineAction;
+  els.confirmReopenButton.disabled = true;
+  try {
+    await apiFetch(`/api/deadlines/${encodeURIComponent(id)}/reopen`, { method: "POST" });
+    closeReopen();
+    showToast("Deadline reopened");
+    await refreshVisibleData({ silent: false, force: true });
+  } catch (err) {
+    showToast(err.message || "Failed to reopen deadline.");
+  } finally {
+    els.confirmReopenButton.disabled = false;
+  }
+}
+
+function getDeadlinesFor(date) {
+  return (deadlinesByDate.get(isoKey(date)) || []).filter((deadline) => activeFilters.has(deadline.cat));
+}
+
+function deadlineColor(deadline) {
+  return deadline.color || getCategory(deadline.cat).color || FALLBACK_CATEGORY.color;
+}
+
+function deadlineDueText(deadline, date = selectedDate) {
+  if (deadline.status === "completed") return "Completed";
+  const reference = sameDay(date, today()) ? Date.now() : startOfDay(date).getTime();
+  const diff = deadline.dueMs - reference;
+  const minutes = Math.max(1, Math.round(Math.abs(diff) / 60000));
+  const value = minutes < 60 ? `${minutes} min` : minutes <= 720 ? `${Math.round(minutes / 60)} hour${Math.round(minutes / 60) === 1 ? "" : "s"}` : `${Math.round(minutes / 1440)}d`;
+  return diff < 0 ? `⚠ ${value} late` : `In ${value}`;
+}
+
+function eventRelativeLabel(event, date) {
+  if (isAllDayEvent(event)) return "";
+  const diff = new Date(`${isoKey(date)}T${event.start}:00`).getTime() - Date.now();
+  if (diff < 60000 || diff > 12 * 60 * 60 * 1000) return "";
+  const minutes = Math.max(1, Math.round(diff / 60000));
+  if (minutes < 60) return `in ${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = Math.round(minutes / 60);
+  return `in ${hours} hour${hours === 1 ? "" : "s"}`;
+}
+
+function quickDeadlines(date = selectedDate) {
+  const windowDays = { high: 3, default: 2, low: 1 };
+  const selectedStart = startOfDay(date).getTime();
+  return [...deadlinesByDate.values()].flat()
+    .filter((deadline) => activeFilters.has(deadline.cat))
+    .filter((deadline) => Math.abs((new Date(`${deadline.dateKey}T00:00:00`).getTime() - selectedStart) / 86400000) <= (windowDays[deadline.priority] || 2))
+    .sort((a, b) => ({ high: 0, default: 1, low: 2 }[a.priority] - ({ high: 0, default: 1, low: 2 }[b.priority])) || a.dueMs - b.dueMs);
+}
+
+function deadlineItemHTML(deadline) {
+  const color = deadlineColor(deadline);
+  const statusClass = deadline.status === "completed" ? "done" : deadline.status;
+  return `<div class="ddl-item ${statusClass}" style="--ddl-color:${color};--ddl-bg:${deadline.bg}" data-deadline-id="${escapeAttr(deadline.id)}">
+    <div class="ddl-item-bar"></div>
+    <div class="ddl-item-main">
+      <div class="ddl-item-title" title="${escapeAttr(deadline.title)}">⚑ ${escapeHtml(deadline.title)}</div>
+      <div class="ddl-item-meta"><span class="ddl-meta-main"><span class="pri-tag pri-${deadline.priority}">${deadline.priority}</span>${deadlineDueText(deadline)}</span><span class="ddl-meta-category" title="${escapeAttr(deadline.cat)}">${escapeHtml(deadline.cat)}</span></div>
+    </div>
+    <span class="ddl-item-action">${statusClass === "done" ? "Reopen" : "Complete"}</span>
+  </div>`;
+}
+
+function ddlRailHTML() {
+  const quick = quickDeadlines();
+  const visible = quick.slice(0, 3);
+  const more = quick.length - visible.length;
+  return `<div class="ddl-rail"><div class="ddl-rail-head"><span>Due soon</span><span>${sameDay(selectedDate, today()) ? "by priority" : `relative to ${pad2(selectedDate.getMonth() + 1)}.${pad2(selectedDate.getDate())}`}</span></div>
+    <div class="ddl-list">${visible.length ? visible.map(deadlineItemHTML).join("") : '<div class="inspector-empty">Nothing due soon.</div>'}</div>
+    ${more > 0 ? `<button type="button" class="ddl-more" data-open-quick>+${more} more</button>` : ""}
+    <button type="button" class="ddl-rail-add" data-open-deadline>⚑ New deadline</button>
+  </div>`;
 }
 
 function sortEvents(events) {

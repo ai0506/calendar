@@ -5,6 +5,7 @@
   "description": "AI0506 Calendar — 私人日历系统 (Cloudflare Pages + Functions + D1)",
   "scripts": {
     "dev": "wrangler pages dev",
+    "test:deadlines": "node tests/deadlines.test.mjs",
     "test:series-patch": "node tests/series-patch.test.mjs",
     "db:local": "wrangler d1 migrations apply calendar-db --local",
     "db:remote": "wrangler d1 migrations apply calendar-db --remote",

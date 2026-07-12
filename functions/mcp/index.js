@@ -6,7 +6,7 @@
 // 鉴权（每个请求都要求）：
 //   1) OAuth 2.1 access token：Authorization: Bearer <access_token>
 //      通过 /oauth/* 授权流程签发；校验签名 + 过期 + aud（资源）。
-//      任一有效 token 均可调用全部 5 个工具。
+//      任一有效 token 均可调用全部日历工具。
 //   2) 本地调试旁路：若设置了环境变量 MCP_WRITE_TOKEN 且 Bearer 与之相等，也放行。
 //      **生产环境不要设置 MCP_WRITE_TOKEN**——不设置则仅 OAuth 可用。
 //
@@ -59,6 +59,24 @@ import {
 
 // 与客户端协商的协议版本。若客户端请求了具体版本则回显，否则用此默认值。
 const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
+const DEFAULT_EVENT_LOOKAHEAD_DAYS = 30;
+
+function shanghaiIso(date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date).reduce((out, part) => {
+    if (part.type !== "literal") out[part.type] = part.value;
+    return out;
+  }, {});
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}+08:00`;
+}
 
 // 本地调试用的宽松 CORS（Inspector 可能通过浏览器发起）。
 const CORS_HEADERS = {
@@ -119,19 +137,19 @@ const TOOLS = [
   {
     name: "list_events",
     description:
-      "【只读】列出日历事件（排除已删除）。可按时间范围 from/to（ISO 8601 带时区偏移，" +
-      "过滤 start_time）和分类名 category 过滤，按开始时间升序返回。",
+      "【只读｜用户主日历】列出日历事件（排除已删除）。未提供 from/to 时默认返回当前上海时间起未来 30 天；" +
+      "如需历史或更远日期，请显式提供 from/to。可按 ISO 8601 时间范围和分类名 category 过滤，按开始时间升序返回。",
     annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
       properties: {
         from: {
           type: "string",
-          description: "起始时间，ISO 8601 带时区偏移。过滤 start_time >= from。",
+          description: "起始时间，ISO 8601 带时区偏移；例如 2026-07-14T00:00:00+08:00。过滤 start_time >= from。",
         },
         to: {
           type: "string",
-          description: "结束时间，ISO 8601 带时区偏移。过滤 start_time <= to。",
+          description: "结束时间，ISO 8601 带时区偏移；例如 2026-08-13T23:59:59+08:00。过滤 start_time <= to。",
         },
         category: { type: "string", description: "按分类名精确过滤，如 Physics。" },
       },
@@ -255,19 +273,22 @@ const TOOLS = [
   },
   {
     name: "get_event_series",
-    description: "【只读】获取指定 id 的重复系列：规则、当前未删除实例、以及已登记的跳过项(exceptions)。",
+    description: "【只读｜用户主日历】获取指定 series_id 的重复系列：规则、当前未删除实例、以及已登记的跳过项(exceptions)。请使用 create_event_series 或 split_series 返回的精确 ID。",
     annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
-      properties: { id: { type: "string", description: "系列 id（series_id）" } },
-      required: ["id"],
+      properties: {
+        series_id: { type: "string", description: "系列 id。优先使用此字段。" },
+        id: { type: "string", description: "兼容旧调用的系列 id 别名；不要与 series_id 同时传。" },
+      },
+      anyOf: [{ required: ["series_id"] }, { required: ["id"] }],
       additionalProperties: false,
     },
   },
   {
     name: "update_event_series",
     description:
-      "【需写权限】修改整个重复系列的规则（仅传要改的字段），会按新规则**重新生成全部实例**。" +
+      "【需写权限｜用户主日历】修改整个重复系列的规则（仅传要改的字段），会按新规则**重新生成全部实例**。" +
       "⚠️ 影响面大：之前对单个实例的单独修改会丢失。" +
       "👉 优先考虑更精细的做法：只想改“从某天起”的规则 → 用 split_series 先切成两段再改新段；" +
       "只想去掉/挪动某一次 → 用 skip_occurrence。仅当要整体改动整个系列时才用本工具。",
@@ -275,7 +296,8 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        id: { type: "string", description: "系列 id（series_id）" },
+        series_id: { type: "string", description: "系列 id。优先使用此字段。" },
+        id: { type: "string", description: "兼容旧调用的系列 id 别名；不要与 series_id 同时传。" },
         ...EVENT_WRITE_PROPERTIES,
         frequency: { type: "string", enum: ["daily", "weekly", "monthly", "yearly"], description: "重复频率" },
         weekdays: {
@@ -287,20 +309,24 @@ const TOOLS = [
         end_date: { type: "string", description: "结束日期 YYYY-MM-DD" },
         occurrence_count: { type: "integer", description: "重复次数（≤366）" },
       },
-      required: ["id"],
+      anyOf: [{ required: ["series_id"] }, { required: ["id"] }],
       additionalProperties: false,
     },
   },
   {
     name: "delete_event_series",
     description:
-      "【需写权限】软删除**整个**重复系列及其全部未删除实例。" +
+      "【需写权限｜用户主日历】软删除**整个**重复系列及其全部未删除实例。" +
+      "必须使用 create_event_series 或 split_series 返回的精确 series_id；不要根据标题猜 ID。" +
       "👉 若只想去掉其中一次，别用这个——改用 skip_occurrence（保留系列，只跳过那一次）。",
     annotations: { readOnlyHint: false, destructiveHint: true },
     inputSchema: {
       type: "object",
-      properties: { id: { type: "string", description: "系列 id（series_id）" } },
-      required: ["id"],
+      properties: {
+        series_id: { type: "string", description: "系列 id。优先使用此字段。" },
+        id: { type: "string", description: "兼容旧调用的系列 id 别名；不要与 series_id 同时传。" },
+      },
+      anyOf: [{ required: ["series_id"] }, { required: ["id"] }],
       additionalProperties: false,
     },
   },
@@ -364,10 +390,18 @@ async function runListEvents(env, args = {}) {
   if (from !== undefined && !isValidIso(from)) throw new Error("from 必须是 ISO 8601（带时区偏移）");
   if (to !== undefined && !isValidIso(to)) throw new Error("to 必须是 ISO 8601（带时区偏移）");
 
+  let effectiveFrom = from;
+  let effectiveTo = to;
+  if (effectiveFrom === undefined && effectiveTo === undefined) {
+    const now = new Date();
+    effectiveFrom = shanghaiIso(now);
+    effectiveTo = shanghaiIso(new Date(now.getTime() + DEFAULT_EVENT_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000));
+  }
+
   let sql = "SELECT * FROM events WHERE deleted_at IS NULL";
   const params = [];
-  if (from) { sql += " AND start_time >= ?"; params.push(from); }
-  if (to) { sql += " AND start_time <= ?"; params.push(to); }
+  if (effectiveFrom) { sql += " AND start_time >= ?"; params.push(effectiveFrom); }
+  if (effectiveTo) { sql += " AND start_time <= ?"; params.push(effectiveTo); }
   if (category) { sql += " AND category = ?"; params.push(category); }
   sql += " ORDER BY start_time ASC";
 
@@ -575,6 +609,15 @@ async function getActiveSeries(env, id) {
   return queryOne(env.DB, "SELECT * FROM event_series WHERE id = ? AND deleted_at IS NULL", [id]);
 }
 
+function seriesIdFromArgs(args) {
+  const seriesId = args.series_id ?? args.id;
+  if (args.series_id !== undefined && args.id !== undefined && args.series_id !== args.id) {
+    throw new Error("series_id and id must match when both are provided");
+  }
+  if (typeof seriesId !== "string" || seriesId.trim() === "") throw new Error("series_id is required");
+  return seriesId;
+}
+
 // 从友好的工具参数构造 recurrence 请求体，并补齐派生字段（start_date / monthly_*）。
 function buildRecurrenceBody(args) {
   const startTime = args.start_time;
@@ -634,8 +677,7 @@ async function runCreateEventSeries(env, args = {}) {
 
 // 对应 GET /api/event-series/:id
 async function runGetEventSeries(env, args = {}) {
-  const { id } = args;
-  if (typeof id !== "string" || id === "") throw new Error("id is required");
+  const id = seriesIdFromArgs(args);
   const series = await getActiveSeries(env, id);
   if (!series) throw new Error("Event series not found");
   const events = await queryAll(
@@ -659,8 +701,7 @@ const SERIES_PATCH_FIELDS = [
 ];
 
 async function runUpdateEventSeries(env, args = {}) {
-  const { id } = args;
-  if (typeof id !== "string" || id === "") throw new Error("id is required");
+  const id = seriesIdFromArgs(args);
   const series = await getActiveSeries(env, id);
   if (!series) throw new Error("Event series not found");
 
@@ -735,8 +776,7 @@ async function runUpdateEventSeries(env, args = {}) {
 
 // 对应 DELETE /api/event-series/:id
 async function runDeleteEventSeries(env, args = {}) {
-  const { id } = args;
-  if (typeof id !== "string" || id === "") throw new Error("id is required");
+  const id = seriesIdFromArgs(args);
   const series = await getActiveSeries(env, id);
   if (!series) throw new Error("Event series not found");
   const now = nowIso();
@@ -1029,6 +1069,11 @@ async function handleMessage(request, env, msg) {
           protocolVersion: typeof requested === "string" ? requested : DEFAULT_PROTOCOL_VERSION,
           capabilities: { tools: {} },
           serverInfo: { name: "ai0506-calendar", version: "0.1.0" },
+          instructions:
+            "这是用户的主日历，也是默认应使用的个人日历。除非用户明确指定其他日历，否则读取和写入都使用这里。" +
+            "调用工具前先读取 tools/list，不要猜工具名或参数名。list_events 未指定 from/to 时只返回当前上海时间起未来 30 天；" +
+            "需要历史或更远日期时必须显式提供时间范围。系列工具统一优先使用 series_id，并始终沿用 create_event_series 或 split_series 返回的精确 ID。" +
+            "删除系列前先确认目标 series_id；只取消一次时使用 skip_occurrence，不要删除整个系列。",
         });
       }
 

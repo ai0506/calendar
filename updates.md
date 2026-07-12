@@ -400,3 +400,4 @@
 [Codex][260713001043] 按反馈调整正式前端细节：移除右侧 New deadline，顶部 New Event 改为 New，Event 创建按钮改为 Create，DDL 表单改为 Category 在前、Priority 在后，Inspector 预留稳定滚动条槽位，并将不足 24 小时的 DDL 相对时间改为小时。
 [Codex][260713001833] 移除 Inspector、竖屏详情和月视图日期格中的 Add Event 入口，创建 Event/Deadline 统一只使用顶部 New 按钮。
 [Codex][260712232601] 新增单次 Deadline 的 MCP 工具（查询、创建、读取、修改、删除、完成、重开），并同步更新 API_DOC.md 与 MCP_DEPLOY.md 的能力说明和使用约定。
+[Codex][260713002108] 为 Deadline MCP 的 7 个工具增加 outputSchema，明确列表、DDL 对象和软删除结果的返回结构，帮助模型稳定理解工具输出。

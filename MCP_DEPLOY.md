@@ -10,7 +10,7 @@
 
 | 文件 | 作用 |
 |------|------|
-| `functions/mcp/index.js` | MCP 端点（Streamable HTTP）。要求有效 Bearer access token，暴露日历读写与重复系列工具 |
+| `functions/mcp/index.js` | MCP 端点（Streamable HTTP）。要求有效 Bearer access token，暴露事件、重复系列和单次 Deadline 工具 |
 | `functions/_lib/oauth.js` | OAuth 辅助：PKCE、无状态 access token 签名/校验、随机令牌、资源标识 |
 | `functions/.well-known/oauth-protected-resource.js` | 受保护资源元数据 (RFC 9728) |
 | `functions/.well-known/oauth-authorization-server.js` | 授权服务器元数据 (RFC 8414) |
@@ -21,6 +21,8 @@
 | `.dev.vars` / `.dev.vars.example` | 新增 `MCP_WRITE_TOKEN`（仅本地调试） |
 
 **未改动**：现有 REST API（`functions/api/*`）、`_middleware.js`、`_lib` 其余文件、API_TOKEN、Cookie 登录。
+
+Deadline MCP 使用与 REST API 相同的 D1 表和 `functions/_lib/deadlines.js` 校验逻辑；支持单次 Deadline，暂不支持重复 Deadline。
 
 ---
 
@@ -117,7 +119,18 @@ npx @modelcontextprotocol/inspector
 
 ---
 
-## 7. 需要你手动处理的清单（汇总）
+## 7. Deadline 工具
+
+- `list_deadlines`：按 `from` / `to`（`YYYY-MM-DD`）、分类和完成状态查询；不传日期默认返回未来 30 天。
+- `create_deadline`：创建单次 DDL，必须提供 `title`、`due_time`；`priority` 为 `high`、`default` 或 `low`。
+- `get_deadline`、`update_deadline`、`delete_deadline`：读取、修改和软删除 DDL。
+- `complete_deadline` / `reopen_deadline`：完成或重新打开 DDL，重复调用幂等。
+
+DDL 使用独立的 `due_time`、`priority` 和完成状态，不要当作普通 event 创建。
+
+---
+
+## 8. 需要你手动处理的清单（汇总）
 
 - [ ] `npm run db:remote`：远程应用 0006 迁移
 - [ ] 确认生产环境变量 `SESSION_SECRET` 为足够长的随机串

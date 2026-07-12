@@ -54,7 +54,11 @@
 
   <div class="scrim" id="eventScrim">
     <div class="modal event-modal" role="dialog" aria-modal="true" aria-labelledby="eventModalTitle">
-      <h2 id="eventModalTitle">New Event</h2>
+      <h2 id="eventModalTitle">New</h2>
+      <div class="new-seg" role="tablist" aria-label="New item type">
+        <button type="button" id="ntEvent" class="active" role="tab" aria-selected="true">Event</button>
+        <button type="button" id="ntDdl" role="tab" aria-selected="false">Deadline</button>
+      </div>
       <form id="eventForm">
         <div class="event-form-body">
           <div class="field">
@@ -132,6 +136,44 @@
           <button type="submit" class="btn-create" id="createButton">Create Event</button>
         </div>
       </form>
+      <form id="ddlForm" hidden>
+        <div class="ddl-form-body">
+          <div class="field">
+            <label for="dTitle">Title</label>
+            <input type="text" id="dTitle" placeholder="e.g. Submit lab report" required />
+          </div>
+          <div class="field">
+            <label>Priority</label>
+            <div class="pri-seg" id="priSeg" role="group" aria-label="Deadline priority">
+              <button type="button" data-priority="high">High</button>
+              <button type="button" data-priority="default" class="sel">Default</button>
+              <button type="button" data-priority="low">Low</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>Category</label>
+            <div class="cat-swatches" id="dCatSwatches"></div>
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label for="dDate">Due date</label>
+              <input type="date" id="dDate" required />
+            </div>
+            <div class="field" id="dTimeField">
+              <label for="dTime">Due time</label>
+              <input type="time" id="dTime" value="18:00" />
+            </div>
+          </div>
+          <div class="all-day-toggle">
+            <input type="checkbox" id="dAllday" />
+            <label for="dAllday">All-day (due by end of day)</label>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel" data-action="close-event">Cancel</button>
+          <button type="submit" class="btn-create" id="createDdlButton">Create</button>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -146,6 +188,28 @@
       <div class="modal-actions">
         <button type="button" class="btn-cancel" data-action="close-confirm">Cancel</button>
         <button type="button" class="btn-delete" id="confirmDeleteButton">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="scrim" id="completeScrim">
+    <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="completeModalTitle">
+      <h2 id="completeModalTitle">Complete deadline</h2>
+      <p class="confirm-text">Mark <b id="completeTitle"></b> as completed?</p>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" data-action="close-complete">Cancel</button>
+        <button type="button" class="btn-create" id="confirmCompleteButton">Mark complete</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="scrim" id="reopenScrim">
+    <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="reopenModalTitle">
+      <h2 id="reopenModalTitle">Reopen deadline</h2>
+      <p class="confirm-text">Reopen <b id="reopenTitle"></b> and mark it as not completed?</p>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" data-action="close-reopen">Cancel</button>
+        <button type="button" class="btn-create" id="confirmReopenButton">Reopen</button>
       </div>
     </div>
   </div>

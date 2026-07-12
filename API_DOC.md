@@ -319,3 +319,68 @@ Idempotency-Key: <operation-uuid>
 | `not_an_occurrence` | 指定时间不是该重复系列的有效实例 |
 | `split_not_supported_for_count_series` | 只有 occurrence_count 的系列暂不支持 split |
 | `server_error` | 内部错误 |
+
+---
+
+## Deadlines（单次 DDL）
+
+DDL 是独立于 `events` 的截止事项。当前不支持重复 DDL、批量导入或导出扩展；REST API 和 MCP 均支持单次 DDL。
+
+### 数据和时间约定
+
+- `due_time` 使用 `YYYY-MM-DD` 或带时区的 ISO 8601 日期时间。
+- `all_day=true` 时必须使用 `YYYY-MM-DD`；截止日当天仍为 `open`，次日按 `Asia/Shanghai` 变为 `overdue`。
+- `all_day=false` 时必须使用带时区的日期时间。
+- `completed_at` 存在时返回 `status=completed`、`is_overdue=false`。
+- 列表和详情排除软删除数据，因此公开 API 不返回 `status=deleted`。
+- `category` 复用现有 `categories`；`color=null` 或 `color="default"` 表示跟随分类颜色。
+- `priority` 表示 DDL 重要程度，只允许 `high` / `default` / `low`，缺省为 `default`；不改变截止状态和截止时间。
+- 空字符串或全空白 `external_id` 会归一化为 `null`。
+
+### `GET /api/deadlines`
+
+可选参数：
+
+| 参数 | 说明 |
+|---|---|
+| `from` / `to` | `YYYY-MM-DD` 日期范围，包含边界 |
+| `category` | 共享分类过滤 |
+| `include_completed` | 缺省、`true`、`1` 表示包含；`false`、`0` 表示排除；其他值返回 `400` |
+
+服务端按存储值的日期部分查询，并按日历日期、全天优先、`julianday(due_time)`、`id` 排序。
+
+### `POST /api/deadlines`
+
+成功返回 `201`。重复的 `(source, external_id)` 返回 `409 conflict`，包括原记录已软删除的情况。
+
+### `GET/PUT/DELETE /api/deadlines/:id`
+
+GET 返回活动 DDL；PUT 只允许修改标题、描述、截止时间、全天标志、分类、颜色、分组和 `priority`；DELETE 使用软删除。 `source` 和 `external_id` 创建后不可修改。
+
+`priority` 只允许 `high`、`default`、`low`，缺省值为 `default`。
+
+### `POST /api/deadlines/:id/complete`
+
+将未完成 DDL 设置为完成，并写入 `completed_at`。重复 complete 直接返回当前对象，不更新 `updated_at`。
+
+### `POST /api/deadlines/:id/reopen`
+
+将已完成 DDL 的 `completed_at` 清空。重复 reopen 直接返回当前对象，不更新 `updated_at`。
+
+两个状态接口使用目标状态条件 UPDATE；目标记录不存在或已软删除返回 `404`。
+
+### MCP 工具
+
+Remote MCP `/mcp` 提供与上述 REST API 对应的单次 DDL 工具：
+
+| 工具 | 作用 |
+|---|---|
+| `list_deadlines` | 按日期范围、分类和完成状态查询；不传日期时默认返回上海时间起未来 30 天 |
+| `create_deadline` | 创建单次 DDL，`priority` 支持 `high` / `default` / `low` |
+| `get_deadline` | 按 `id` 查询单个活动 DDL |
+| `update_deadline` | 修改 DDL 字段；`source` 和 `external_id` 不可修改 |
+| `delete_deadline` | 软删除 DDL |
+| `complete_deadline` | 标记完成，重复调用幂等 |
+| `reopen_deadline` | 重新打开，重复调用幂等 |
+
+MCP 工具直接访问同一 D1 数据库，并复用 REST 的字段校验、优先级枚举、截止状态和软删除规则。

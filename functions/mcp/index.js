@@ -47,6 +47,15 @@ import {
   insertSeriesStatement,
   insertInstanceStatement,
 } from "../_lib/series.js";
+import {
+  activeDeadline,
+  deadlineDateParam,
+  deadlineFields,
+  normalizeDeadlineInput,
+  parseBooleanParam,
+  rowToDeadline,
+  validateDeadlineInput,
+} from "../_lib/deadlines.js";
 
 // 与客户端协商的协议版本。若客户端请求了具体版本则回显，否则用此默认值。
 const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
@@ -93,6 +102,19 @@ const EVENT_WRITE_PROPERTIES = {
   group_title: { type: "string", description: "分组标题（可选）" },
 };
 
+const DEADLINE_WRITE_PROPERTIES = {
+  title: { type: "string", description: "截止事项标题" },
+  description: { type: "string", description: "描述（可选）" },
+  due_time: { type: "string", description: "截止日期 YYYY-MM-DD，或带时区的 ISO 8601 时间" },
+  all_day: { type: "boolean", description: "是否全天截止事项；全天时 due_time 必须为 YYYY-MM-DD" },
+  category: { type: "string", description: "分类名（可选）" },
+  color: { type: "string", description: "六位 hex 颜色、default 或 null（可选）" },
+  group_title: { type: "string", description: "分组标题（可选）" },
+  priority: { type: "string", enum: ["high", "default", "low"], description: "重要程度，默认 default" },
+  source: { type: "string", description: "来源（创建时可选）" },
+  external_id: { type: "string", description: "外部唯一标识（创建时可选）" },
+};
+
 const TOOLS = [
   {
     name: "list_events",
@@ -121,6 +143,53 @@ const TOOLS = [
     description: "【只读】列出全部分类，按 sort_order、name 升序返回。",
     annotations: { readOnlyHint: true },
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "list_deadlines",
+    description: "【只读】列出单次截止事项。未指定日期时返回当前上海时间起未来 30 天；可按分类和完成状态过滤。",
+    annotations: { readOnlyHint: true },
+    inputSchema: { type: "object", properties: {
+      from: { type: "string", description: "起始日期 YYYY-MM-DD（可选）" },
+      to: { type: "string", description: "结束日期 YYYY-MM-DD（可选）" },
+      category: { type: "string", description: "分类名（可选）" },
+      include_completed: { type: "boolean", description: "是否包含已完成项，默认 true" },
+    }, additionalProperties: false },
+  },
+  {
+    name: "create_deadline",
+    description: "【需写权限】创建单次截止事项。priority 仅支持 high/default/low；暂不支持重复截止事项。",
+    annotations: { readOnlyHint: false },
+    inputSchema: { type: "object", properties: DEADLINE_WRITE_PROPERTIES, required: ["title", "due_time"], additionalProperties: false },
+  },
+  {
+    name: "get_deadline",
+    description: "【只读】按 id 读取单个活动截止事项。",
+    annotations: { readOnlyHint: true },
+    inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" } }, required: ["id"], additionalProperties: false },
+  },
+  {
+    name: "update_deadline",
+    description: "【需写权限】修改截止事项；source 和 external_id 创建后不可修改，只传需要修改的字段。",
+    annotations: { readOnlyHint: false },
+    inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" }, ...DEADLINE_WRITE_PROPERTIES }, required: ["id"], additionalProperties: false },
+  },
+  {
+    name: "delete_deadline",
+    description: "【需写权限】软删除一个截止事项。",
+    annotations: { readOnlyHint: false, destructiveHint: true },
+    inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" } }, required: ["id"], additionalProperties: false },
+  },
+  {
+    name: "complete_deadline",
+    description: "【需写权限】将截止事项标记为已完成；重复调用幂等。",
+    annotations: { readOnlyHint: false },
+    inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" } }, required: ["id"], additionalProperties: false },
+  },
+  {
+    name: "reopen_deadline",
+    description: "【需写权限】重新打开已完成的截止事项；重复调用幂等。",
+    annotations: { readOnlyHint: false },
+    inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" } }, required: ["id"], additionalProperties: false },
   },
   {
     name: "create_event",
@@ -309,6 +378,67 @@ async function runListEvents(env, args = {}) {
 // 复用与 GET /api/categories 相同的查询逻辑。
 async function runListCategories(env) {
   return queryAll(env.DB, "SELECT * FROM categories ORDER BY sort_order ASC, name ASC");
+}
+
+function shanghaiDateKey(date = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(date);
+}
+
+async function runListDeadlines(env, args = {}) {
+  let from = deadlineDateParam(args.from); let to = deadlineDateParam(args.to);
+  if (from === undefined || to === undefined) throw new Error("from/to must be valid YYYY-MM-DD dates");
+  if (from && to && to < from) throw new Error("to must not be before from");
+  if (args.category !== undefined && (typeof args.category !== "string" || args.category.trim() === "")) throw new Error("category must be a non-empty string");
+  const includeCompleted = args.include_completed === undefined ? true : parseBooleanParam(args.include_completed, true);
+  if (includeCompleted === null) throw new Error("include_completed must be true or false");
+  if (!from && !to) { from = shanghaiDateKey(); to = shanghaiDateKey(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)); }
+  let sql = "SELECT * FROM deadlines WHERE deleted_at IS NULL"; const params = [];
+  if (from) { sql += " AND substr(due_time, 1, 10) >= ?"; params.push(from); }
+  if (to) { sql += " AND substr(due_time, 1, 10) <= ?"; params.push(to); }
+  if (!includeCompleted) sql += " AND completed_at IS NULL";
+  if (args.category) { sql += " AND category = ?"; params.push(args.category); }
+  sql += " ORDER BY substr(due_time, 1, 10) ASC, CASE WHEN all_day = 1 THEN 0 ELSE 1 END ASC, CASE WHEN all_day = 1 THEN 0 ELSE julianday(due_time) END ASC, id ASC";
+  return (await queryAll(env.DB, sql, params)).map(rowToDeadline);
+}
+
+async function runCreateDeadline(env, args = {}) {
+  const message = validateDeadlineInput(args, true); if (message) throw new Error(message);
+  const input = normalizeDeadlineInput(args); const now = nowIso();
+  const deadline = { id: crypto.randomUUID(), title: input.title.trim(), description: input.description ?? null, due_time: input.due_time, all_day: input.all_day === 1 ? 1 : 0, category: input.category ?? null, color: input.color ?? null, group_title: input.group_title ?? null, priority: input.priority || "default", source: input.source || "mcp", external_id: input.external_id ?? null, created_at: now, updated_at: now, completed_at: null, deleted_at: null };
+  await run(env.DB, "INSERT INTO deadlines (id, title, description, due_time, all_day, category, color, group_title, priority, source, external_id, created_at, updated_at, completed_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", Object.values(deadline));
+  return rowToDeadline(deadline);
+}
+
+async function runGetDeadline(env, args = {}) {
+  if (typeof args.id !== "string" || args.id.trim() === "") throw new Error("id is required");
+  const row = await activeDeadline(env, args.id); if (!row) throw new Error("Deadline not found"); return rowToDeadline(row);
+}
+
+async function runUpdateDeadline(env, args = {}) {
+  if (typeof args.id !== "string" || args.id.trim() === "") throw new Error("id is required");
+  const existing = await activeDeadline(env, args.id); if (!existing) throw new Error("Deadline not found");
+  if (args.source !== undefined || args.external_id !== undefined) throw new Error("source and external_id cannot be modified");
+  const body = { ...args }; delete body.id;
+  const message = validateDeadlineInput({ ...existing, ...body }, true); if (message) throw new Error(message);
+  const input = normalizeDeadlineInput(body); const sets = []; const values = [];
+  for (const field of deadlineFields()) { if (field === "source" || field === "external_id" || input[field] === undefined) continue; sets.push(`${field} = ?`); values.push(field === "all_day" ? input[field] : field === "title" ? input[field].trim() : input[field]); }
+  sets.push("updated_at = ?"); values.push(nowIso(), args.id);
+  await run(env.DB, `UPDATE deadlines SET ${sets.join(", ")} WHERE id = ? AND deleted_at IS NULL`, values);
+  return rowToDeadline(await activeDeadline(env, args.id));
+}
+
+async function runDeleteDeadline(env, args = {}) {
+  if (typeof args.id !== "string" || args.id.trim() === "") throw new Error("id is required");
+  const now = nowIso(); const result = await run(env.DB, "UPDATE deadlines SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL", [now, now, args.id]);
+  if (!result.meta || result.meta.changes === 0) throw new Error("Deadline not found"); return { id: args.id, deleted: true };
+}
+
+async function runSetDeadlineCompletion(env, args = {}, complete) {
+  if (typeof args.id !== "string" || args.id.trim() === "") throw new Error("id is required");
+  const timestamp = nowIso();
+  if (complete) await run(env.DB, "UPDATE deadlines SET completed_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL AND completed_at IS NULL", [timestamp, timestamp, args.id]);
+  else await run(env.DB, "UPDATE deadlines SET completed_at = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL AND completed_at IS NOT NULL", [timestamp, args.id]);
+  const current = await activeDeadline(env, args.id); if (!current) throw new Error("Deadline not found"); return rowToDeadline(current);
 }
 
 // --- 写入工具实现（镜像 REST handler 逻辑）--------------------------------
@@ -853,6 +983,13 @@ async function callTool(env, name, args) {
   switch (name) {
     case "list_events": return runListEvents(env, args);
     case "list_categories": return runListCategories(env);
+    case "list_deadlines": return runListDeadlines(env, args);
+    case "create_deadline": return runCreateDeadline(env, args);
+    case "get_deadline": return runGetDeadline(env, args);
+    case "update_deadline": return runUpdateDeadline(env, args);
+    case "delete_deadline": return runDeleteDeadline(env, args);
+    case "complete_deadline": return runSetDeadlineCompletion(env, args, true);
+    case "reopen_deadline": return runSetDeadlineCompletion(env, args, false);
     case "create_event": return runCreateEvent(env, args);
     case "update_event": return runUpdateEvent(env, args);
     case "delete_event": return runDeleteEvent(env, args);

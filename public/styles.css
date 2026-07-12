@@ -434,6 +434,7 @@ button, select, input[type=checkbox]{ user-select:none; }
 .new-seg button{ flex:1; border:none; background:transparent; padding:8px 0; border-radius:8px; font-size:13px; font-weight:600; color:var(--muted); cursor:pointer; font-family:inherit; transition:background .12s ease,color .12s ease; }
 .new-seg button.active{ background:var(--ground); color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,.06); }
 #eventForm, #ddlForm{ min-height:0; flex:1; flex-direction:column; }
+#eventForm[hidden], #ddlForm[hidden]{ display:none !important; }
 #eventForm:not([hidden]), #ddlForm:not([hidden]){ display:flex; }
 .ddl-form-body{ height:0; flex:1; min-height:0; overflow-y:auto; scrollbar-gutter:stable; padding:0 3px; }
 .pri-seg{ display:flex; gap:6px; }

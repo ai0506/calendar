@@ -1240,7 +1240,7 @@ function syncRepeatUI(resetWeekday = false) {
   }
 
   if (!enabled) {
-    els.createButton.textContent = "Create Event";
+    els.createButton.textContent = "Create";
     hideRepeatError();
     els.repeatPreview.textContent = "";
     return;
@@ -1250,11 +1250,11 @@ function syncRepeatUI(resetWeekday = false) {
   if (repeat.error) {
     showRepeatError(repeat.error);
     els.repeatPreview.textContent = "";
-    els.createButton.textContent = "Create Events";
+    els.createButton.textContent = "Create";
   } else {
     hideRepeatError();
     els.repeatPreview.textContent = `${repeatDescription(repeat.value)} · Will create ${repeat.value.previewCount} events`;
-    els.createButton.textContent = `Create ${repeat.value.previewCount} Events`;
+    els.createButton.textContent = "Create";
   }
 }
 
@@ -1454,7 +1454,7 @@ function deadlineDueText(deadline, date = selectedDate) {
   const reference = sameDay(date, today()) ? Date.now() : startOfDay(date).getTime();
   const diff = deadline.dueMs - reference;
   const minutes = Math.max(1, Math.round(Math.abs(diff) / 60000));
-  const value = minutes < 60 ? `${minutes} min` : minutes <= 720 ? `${Math.round(minutes / 60)} hour${Math.round(minutes / 60) === 1 ? "" : "s"}` : `${Math.round(minutes / 1440)}d`;
+  const value = minutes < 60 ? `${minutes} min` : minutes < 1440 ? `${Math.round(minutes / 60)} hour${Math.round(minutes / 60) === 1 ? "" : "s"}` : `${Math.round(minutes / 1440)}d`;
   return diff < 0 ? `⚠ ${value} late` : `In ${value}`;
 }
 
@@ -1497,7 +1497,6 @@ function ddlRailHTML() {
   return `<div class="ddl-rail"><div class="ddl-rail-head"><span>Due soon</span><span>${sameDay(selectedDate, today()) ? "by priority" : `relative to ${pad2(selectedDate.getMonth() + 1)}.${pad2(selectedDate.getDate())}`}</span></div>
     <div class="ddl-list">${visible.length ? visible.map(deadlineItemHTML).join("") : '<div class="inspector-empty">Nothing due soon.</div>'}</div>
     ${more > 0 ? `<button type="button" class="ddl-more" data-open-quick>+${more} more</button>` : ""}
-    <button type="button" class="ddl-rail-add" data-open-deadline>⚑ New deadline</button>
   </div>`;
 }
 

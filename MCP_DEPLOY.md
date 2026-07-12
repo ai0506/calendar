@@ -10,7 +10,7 @@
 
 | 文件 | 作用 |
 |------|------|
-| `functions/mcp/index.js` | MCP 端点（Streamable HTTP）。要求有效 Bearer access token，暴露 5 个工具 |
+| `functions/mcp/index.js` | MCP 端点（Streamable HTTP）。要求有效 Bearer access token，暴露日历读写与重复系列工具 |
 | `functions/_lib/oauth.js` | OAuth 辅助：PKCE、无状态 access token 签名/校验、随机令牌、资源标识 |
 | `functions/.well-known/oauth-protected-resource.js` | 受保护资源元数据 (RFC 9728) |
 | `functions/.well-known/oauth-authorization-server.js` | 授权服务器元数据 (RFC 8414) |
@@ -125,3 +125,38 @@ npx @modelcontextprotocol/inspector
 - [ ] `npm run deploy`：部署
 - [ ] 跑第 4.3 节自检
 - [ ] 在 Claude Settings → Connectors 里添加并授权
+
+---
+
+## 8. 给 AI 的工具使用约定
+
+这个 MCP 对应用户的**主日历**。除非用户明确指定其他日历，否则 AI 应将这里作为默认日历，直接读取和写入。
+
+### 查询事件
+
+- 调用工具前先读取 `tools/list`，不要猜工具名或参数名。
+- `list_events` 不传 `from` / `to` 时，默认只返回当前 `Asia/Shanghai` 时间起未来 30 天的事件。
+- 查询历史或 30 天以外的事件时，必须显式传入 `from` / `to`，格式为带时区的 ISO 8601，例如 `2026-07-14T00:00:00+08:00`。
+- 只传 `from` 或只传 `to` 时，另一侧不自动补范围，适合查询“某日期之后”或“某日期之前”。
+
+### 普通事件
+
+- 创建事件至少需要 `title` 和 `start_time`。
+- `start_time` / `end_time` 使用 ISO 8601；全天事件可以使用 `YYYY-MM-DD`，并设置 `all_day=true`。
+- `end_time` 必须晚于 `start_time`。
+- 不确定颜色时使用 `color="default"`，让系统跟随分类颜色。
+
+### 重复系列
+
+- `create_event_series` 必须指定 `end_date` 或 `occurrence_count`，不能创建无限重复系列。
+- `weekly` 必须提供 `weekdays`：周日为 `0`，周一为 `1`，一直到周六 `6`。
+- `split_series`、`skip_occurrence`、`restore_occurrence` 使用 `series_id`。
+- `get_event_series`、`update_event_series`、`delete_event_series` 也优先使用 `series_id`；旧版 `id` 仍兼容，但不要两个字段同时传。
+- 始终使用 `create_event_series` 或 `split_series` 返回的精确 ID，不要根据标题、事件 ID 或日期猜系列 ID。
+
+### 删除和修改
+
+- 只取消重复系列中的一次，使用 `skip_occurrence`；不要删除整个系列。
+- 需要从某天起改变规则时，先 `split_series`，再对返回的 `new_series_id` 使用 `update_event_series`。
+- `update_event_series` 会重新生成整个系列实例，可能覆盖之前对单个实例做过的修改；只有确认影响范围后才使用。
+- `delete_event_series` 是破坏性操作。调用前应确认目标 `series_id`，并在结果异常时先用 `get_event_series` 或 `list_events` 核对，不要立即重复删除。

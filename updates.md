@@ -396,4 +396,5 @@
 [Codex][260712232420] 正式前端合并 DDL：统一 New 弹窗保留 Event 重复事件并新增 Deadline Tab；接入 deadlines 查询/创建/完成/重新打开 API；月/周/日/竖屏/Inspector 增加 DDL 展示、优先级、分类色、相对时间、到期线和浮层；保留固定弹窗布局与 Create 文案。
 [Codex][260712232554] 完成正式前端细节收尾：月视图按像素裁剪并显示 +more，周/日时间线补充 Event/DDL 浮层和到期标签堆叠，DDL 新建默认使用分类跟随颜色，完成语法、Chrome 静态渲染和 Deadline 单元测试验证。
 [Codex][260712233428] 修正正式 New 弹窗顶部结构：移除不属于静态预览设计的独立 New 标题，仅保留 Event/Deadline Tab，并改用无障碍 aria-label。
+[Codex][260712234536] 修复 Event/Deadline Tab 内容混排：为隐藏表单增加 display:none !important，确保 Event Tab 只显示 Event 字段，Deadline Tab 只显示 Deadline 字段。
 [Codex][260712232601] 新增单次 Deadline 的 MCP 工具（查询、创建、读取、修改、删除、完成、重开），并同步更新 API_DOC.md 与 MCP_DEPLOY.md 的能力说明和使用约定。

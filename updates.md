@@ -239,3 +239,160 @@
 [Codex][260712001807] Revised production/DEADLINES_PLAN.md after compatibility review: fixed date-based deadline range queries and Asia/Shanghai all-day semantics, added explicit Pages Functions routes and idempotent state-transition rules, preserved legacy exports, closed external_id conflict behavior, aligned frontend caching/rendering with the custom app, and deferred import/MCP extensions.
 [Codex][260712002343] Refined the Deadline implementation plan with target-state conditional UPDATE SQL for complete/reopen, frontend render-time status recomputation, julianday-based timezone-aware ordering, strict calendar/date-time validation, explicit include_completed parsing, completed-overdue semantics, a matching due-date expression index, and complete project documentation sync requirements.
 [Codex][260712002714] Corrected the Deadline plan's frontend DTO to retain completedAt, made the D1 expression index a required migration assumption with an explicit success test, normalized blank external IDs to NULL, and clarified that deleted is internal-only and never exposed by list/detail APIs.
+[Codex][260712003642] Added production/ui-preview/feedback-preview.html, a standalone static calendar preview for the requested stronger +more entry, full-title hover, denser day cards, emphasized Today panel, and raised Categories area without changing production frontend code.
+[Codex][260712004015] Reworked feedback-preview.html to use the production index structure and public/styles.css as its visual base, keeping only static data and preview-only CSS/JS overrides for the requested frontend refinements.
+[Codex][260712003802] Implemented Deadline backend Phase 1/2: added migration 0007 with date expression index, shared strict temporal validation, single-deadline REST CRUD and complete/reopen routes, dynamic status derivation, external ID normalization/conflict handling, unit tests, API/project/deployment/MCP documentation, and local D1/API smoke verification. Frontend, import, export extension, and MCP tools were intentionally not implemented.
+[Codex][260712003834] Tightened Deadline validation so blank categories are rejected while blank source defaults to web and blank external_id remains NULL; reran deadline and recurring-series regression tests successfully.
+[Codex][260712010500] Added three interactive static DDL frontend previews under production/ui-preview, reusing public/styles.css with test events, deadline states, category filters, navigation, and complete/reopen interactions; production frontend files unchanged.
+[Codex][260712010512] Verified all three DDL preview files parse successfully and serve over a local static HTTP server; removed the temporary browser-test script because Playwright is not installed in the environment.
+[Codex][260712011200] Added ddl-preview-interactive.html based on design-a-c: preserved Event month/week/day timeline interactions and added DDL as a parallel layer in month cells, all-day rows, inspector, portrait preview, and complete/reopen controls.
+[Codex][260712011430] Rebuilt ddl-preview-a/b/c as three complete design-a-c-based previews with standard HTML structure, preserved Event interactions, parallel DDL rendering, and distinct visual treatments; verified all three files over local HTTP.
+[Codex][260712011620] Copied the three DDL previews into the accessible root ui-preview directory, corrected the public stylesheet paths, added a preview index page, and verified all entries plus styles.css return HTTP 200.
+[Codex][260712011735] Fixed the blank preview initialization error by declaring the selected-day deadlines collection in renderInspector for all three accessible previews.
+[Codex][260712011820] Fixed the blank-page visual issue caused by public/styles.css hiding unauthenticated preview bodies; added is-authenticated to all three root previews and verified the rendered calendar with Chrome headless screenshot.
+[ClaudeCode][260712094147] ui-preview: 重建 ddl-preview-a/b/c 三套静态预览，日历/事件功能保持不变，deadline 分别用内联融合(Inline Layer)、倒计时看板(Countdown Board)、贴底任务坞(Task Dock)三种方式集成；替换 prompt 为正式弹窗/内联交互，补全测试数据与新建/完成/重开/删除/过滤交互；更新 index.html 说明
+[ClaudeCode][260712100115] file updated
+[ClaudeCode][260712100121] file updated
+[ClaudeCode][260712100140] file updated
+[ClaudeCode][260712100145] file updated
+[ClaudeCode][260712100154] file updated
+[ClaudeCode][260712100206] file updated
+[ClaudeCode][260712100210] file updated
+[ClaudeCode][260712100348] file updated
+[ClaudeCode][260712100353] file updated
+[ClaudeCode][260712100405] file updated
+[ClaudeCode][260712100424] file updated
+[ClaudeCode][260712100429] file updated
+[ClaudeCode][260712100436] file updated
+[ClaudeCode][260712100445] file updated
+[ClaudeCode][260712100449] file updated
+[ClaudeCode][260712100550] file updated
+[ClaudeCode][260712100557] file updated
+[ClaudeCode][260712100607] file updated
+[ClaudeCode][260712100626] file updated
+[ClaudeCode][260712100632] file updated
+[ClaudeCode][260712100638] file updated
+[ClaudeCode][260712100644] file updated
+[ClaudeCode][260712100648] file updated
+[ClaudeCode][260712100758] ui-preview: 三套预览按反馈迭代——共性：月视图条目折叠(超出用+more)点击弹浮层展示当天全部ddl+事件、reopen 增加二次确认弹窗、周/日timeline事件块点击弹浮层看完整信息(浮层覆盖不挤动布局)；B：ddl卡片分类与due date改两行、事件区回到可见(看板限高滚动移到事件下方)；C：移除quick add改为New弹窗、任务坞固定高度消除切tab/空状态时的跳动
+[Codex][260712101925] Added DDL-only priority with high/default/low validation, default database migration 0008, REST create/update support, tests, and synchronized project deployment/API documentation; events remain unchanged.
+[ClaudeCode][260712103208] file updated
+[ClaudeCode][260712103227] file updated
+[ClaudeCode][260712103236] file updated
+[ClaudeCode][260712103247] file updated
+[ClaudeCode][260712103308] file updated
+[ClaudeCode][260712103344] file updated
+[ClaudeCode][260712103356] file updated
+[ClaudeCode][260712103402] file updated
+[ClaudeCode][260712103423] file updated
+[ClaudeCode][260712103428] file updated
+[ClaudeCode][260712103446] file updated
+[ClaudeCode][260712103502] file updated
+[ClaudeCode][260712103523] file updated
+[ClaudeCode][260712103545] file updated
+[ClaudeCode][260712103558] file updated
+[ClaudeCode][260712103713] file updated
+[ClaudeCode][260712103731] file updated
+[ClaudeCode][260712103739] file updated
+[ClaudeCode][260712103750] file updated
+[ClaudeCode][260712103808] file updated
+[ClaudeCode][260712103816] file updated
+[ClaudeCode][260712103822] file updated
+[ClaudeCode][260712103846] file updated
+[ClaudeCode][260712103851] file updated
+[ClaudeCode][260712103904] file updated
+[ClaudeCode][260712103943] file updated
+[ClaudeCode][260712104007] file updated
+[ClaudeCode][260712104023] file updated
+[ClaudeCode][260712104105] file updated
+[ClaudeCode][260712104123] file updated
+[ClaudeCode][260712104131] file updated
+[ClaudeCode][260712104200] file updated
+[ClaudeCode][260712104217] file updated
+[ClaudeCode][260712104227] file updated
+[ClaudeCode][260712104232] file updated
+[ClaudeCode][260712104253] file updated
+[ClaudeCode][260712104259] file updated
+[ClaudeCode][260712104313] file updated
+[ClaudeCode][260712104324] file updated
+[ClaudeCode][260712104330] file updated
+[ClaudeCode][260712104350] file updated
+[ClaudeCode][260712104404] file updated
+[ClaudeCode][260712104526] ui-preview 三套按反馈迭代v3：New Event/New DDL 合并为单个 New 按钮(弹窗内 Event/Deadline 双 Tab 切换)；DDL 新增 priority 字段(high/default/low, 对齐后端 migration 0008)；右侧快捷展示按优先级时间窗过滤(high 72h/default 48h/low 24h, 逾期同窗后隐藏)并按优先级→due 排序(A 的 Deadlines 栏、B 的看板)，C 任务坞按优先级排序并加 priority 标签；月视图改为按像素测量裁剪并动态注入 +more(修复矮格子溢出却无 more)；overdue 改为按 due 派生, complete/reopen 用 done 字段, 修复 reopen 后 overdue 标签丢失与尺寸跳变(meta 单行 nowrap)
+[ClaudeCode][260712213239] file updated
+[ClaudeCode][260712213239] file updated
+[ClaudeCode][260712213240] file updated
+[ClaudeCode][260712213440] 归位：将三套 preview(ddl-preview-a/b/c.html + index.html)移入 production/ui-preview/(覆盖旧版, 保留 design-a-c.html/feedback-preview.html)；样式表引用改为 ../../public/styles.css；删除根目录误建的 ui-preview/ 及其中自动生成的杂散 updates.md（日志统一只写项目根 updates.md）
+[ClaudeCode][260712213559] file updated
+[ClaudeCode][260712213605] file updated
+[ClaudeCode][260712213618] file updated
+[ClaudeCode][260712213627] 优化 CLAUDE.md：明确 updates.md 仅根目录一个(禁止嵌套/子目录版本, 说明 hook 回退行)；production 节新增“所有 scratch/preview/draft 放 production 下、不建在仓库根, ui-preview 指 production/ui-preview, 根目录出现未跟踪 ui-preview 即放错位置”；修正 FRONTEND_SPEC 引用路径为 production/ui-preview/design-a-c.html
+[ClaudeCode][260712215240] file updated
+[ClaudeCode][260712215306] file updated
+[ClaudeCode][260712215329] file updated
+[ClaudeCode][260712215334] file updated
+[ClaudeCode][260712215352] file updated
+[ClaudeCode][260712215401] file updated
+[ClaudeCode][260712215431] file updated
+[ClaudeCode][260712215545] file updated
+[ClaudeCode][260712215610] file updated
+[ClaudeCode][260712215619] file updated
+[ClaudeCode][260712215635] file updated
+[ClaudeCode][260712215641] file updated
+[ClaudeCode][260712215650] file updated
+[ClaudeCode][260712215657] file updated
+[ClaudeCode][260712215715] file updated
+[ClaudeCode][260712215742] file updated
+[ClaudeCode][260712215752] file updated
+[ClaudeCode][260712215842] file updated
+[ClaudeCode][260712215911] file updated
+[ClaudeCode][260712215932] file updated
+[ClaudeCode][260712215939] file updated
+[ClaudeCode][260712215949] file updated
+[ClaudeCode][260712215959] file updated
+[ClaudeCode][260712220005] file updated
+[ClaudeCode][260712220027] file updated
+[ClaudeCode][260712220048] file updated
+[ClaudeCode][260712220101] file updated
+[ClaudeCode][260712220209] file updated
+[ClaudeCode][260712220410] production/ui-preview 三套按反馈迭代v4：优先级标签改为跟随 DDL 自身颜色+字重/透明度(High 粗体/Default 常规/Low 降透明,不再用红蓝灰专属色);B 卡片优先级换行避免挤压分类名;右侧/底部预览的相对时间与顶部 relative to MM.DD 均按选中日重算(今天不显示, 时间窗筛选仍按现在);Mark complete 增加二次确认弹窗;月视图三套都显示 DDL 标题 chip(带 ⚑), 周/日 timeline 定时 DDL 画虚线到期线(分类色+旗帜标签, 区别于红色 now 线)、全天 DDL 回到 all-day 行;修复 C 的 dock 未随选中日重渲染
+[ClaudeCode][260712222006] file updated
+[ClaudeCode][260712222014] file updated
+[ClaudeCode][260712222022] file updated
+[ClaudeCode][260712222032] file updated
+[ClaudeCode][260712222055] file updated
+[ClaudeCode][260712222254] file updated
+[ClaudeCode][260712222321] file updated
+[ClaudeCode][260712222327] file updated
+[ClaudeCode][260712222333] file updated
+[ClaudeCode][260712222346] file updated
+[ClaudeCode][260712222428] file updated
+[ClaudeCode][260712222441] file updated
+[ClaudeCode][260712222447] file updated
+[ClaudeCode][260712222452] file updated
+[ClaudeCode][260712222502] file updated
+[ClaudeCode][260712222511] file updated
+[ClaudeCode][260712222519] file updated
+[ClaudeCode][260712222557] file updated
+[ClaudeCode][260712222610] file updated
+[ClaudeCode][260712222624] file updated
+[ClaudeCode][260712222718] file updated
+[ClaudeCode][260712222726] file updated
+[ClaudeCode][260712222731] file updated
+[ClaudeCode][260712222737] file updated
+[ClaudeCode][260712222743] file updated
+[ClaudeCode][260712222753] file updated
+[ClaudeCode][260712222804] file updated
+[ClaudeCode][260712222810] file updated
+[ClaudeCode][260712222822] file updated
+[ClaudeCode][260712222928] production/ui-preview 三套迭代v5：(1)合并 New 弹窗字段区固定高度包裹, 切 Event/Deadline tab 弹窗尺寸与按钮不再移动;(2)右侧预览窗口改为"距选中日 ±3/2/1 天(按 high/default/low)", 随选日变化;(3)days left/late 去掉紫红专属色, 统一用该 DDL 分类色(B 看板数字+进度条、A 右栏、C 到期文字), late 加 ⚠ 危险字符;(4)timeline 到期线一律用分类色(不再红, 与红色 now 线区分), 时间接近的到期线标签聚类向上错开堆叠;(5)C 底部坞的 relative-to 注记改为固定预留位, 切日期时 All/Open 等 tab 不再移动
+[ClaudeCode][260712223249] 选定方案 A：将 ddl-preview-b/c.html 重命名为 ddl-preview-b/c-已弃用.html, index.html 标注 A 为采用、B/C 已弃用并更新链接
+[Codex][260712224633] 优化 MCP 为用户主日历：initialize 增加 AI 使用指引，list_events 默认查询上海时间未来 30 天，系列工具统一优先使用 series_id 并兼容旧 id，补充删除/重复系列/严格输入使用文档；未修改 Deadline MCP 工具范围。
+[Codex][260712224929] 修改 production/ui-preview/ddl-preview-a.html：DDL 颜色优先使用自身 color 字段并在 default 时回退分类色；右侧预览限制 3 项并支持 +n more 浮层查看；标题增加悬停完整提示；统一创建按钮为 Create；压缩逾期文案并改用分钟/小时相对时间。
+[Codex][260712225408] 调整 ddl-preview-a：右侧 DDL 的相对时间与分类改为分两行；逾期 DDL 使用更浅的半透明分类背景；时间线近距离/重合 DDL 标签增加最大宽度、悬停完整标题和堆叠层级，减少遮挡与溢出。
+[Codex][260712225747] 为 ddl-preview-a 的未来 Event 增加相对开始时间：1–59 分钟显示 in x minute(s)，1–12 小时显示 in x hour(s)，应用到右侧事件预览和周/日时间线，且不显示秒。
+[Codex][260712000000] 新增 CLONE_DEPLOYMENT.md，详细说明在获得原作者授权并保留署名后，创建独立 GitHub 仓库、Cloudflare Pages、D1 数据库、域名、密钥及可选 MCP 实例的完整复刻部署流程。
+[Codex][260712230710] 优化 ddl-preview-a 弹窗：桌面端保持固定尺寸，窄屏自动限制在视口内并支持纵向滚动；新增标题 HTML 转义，避免模板输入被当作 HTML 渲染。
+[Codex][260712232420] 正式前端合并 DDL：统一 New 弹窗保留 Event 重复事件并新增 Deadline Tab；接入 deadlines 查询/创建/完成/重新打开 API；月/周/日/竖屏/Inspector 增加 DDL 展示、优先级、分类色、相对时间、到期线和浮层；保留固定弹窗布局与 Create 文案。
+[Codex][260712232554] 完成正式前端细节收尾：月视图按像素裁剪并显示 +more，周/日时间线补充 Event/DDL 浮层和到期标签堆叠，DDL 新建默认使用分类跟随颜色，完成语法、Chrome 静态渲染和 Deadline 单元测试验证。
+[Codex][260712232601] 新增单次 Deadline 的 MCP 工具（查询、创建、读取、修改、删除、完成、重开），并同步更新 API_DOC.md 与 MCP_DEPLOY.md 的能力说明和使用约定。

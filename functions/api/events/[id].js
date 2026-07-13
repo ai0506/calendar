@@ -47,7 +47,12 @@ export async function onRequestGet(context) {
   const { env, params } = context;
   const row = await getActive(env, params.id);
   if (!row) return error("not_found", "Event not found", 404);
-  return ok(rowToEvent(row));
+  // Attach the event's effective reminders (minutes-before) so detail views can
+  // show them without a second round-trip. All-day events have no configurable reminders.
+  const reminders = row.all_day
+    ? []
+    : await effectiveEventReminders(env, row.id, row.series_id || null);
+  return ok({ ...rowToEvent(row), reminders });
 }
 
 // PUT /api/events/:id

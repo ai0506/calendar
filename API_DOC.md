@@ -89,7 +89,7 @@ Phase 1 使用单一 `API_TOKEN`（环境变量）。
 可选 `reminders` 为最多两个提醒分钟数，例如 `[60, 10]`。未提供时默认使用 `[60, 10]`；`[]` 明确关闭提醒。允许值为 `10`、`15`、`30`、`60`、`120`、`1440`。全天 Event 不接受非空 `reminders`。
 
 #### `GET /api/events/:id`
-返回单个事件；不存在返回 `404`。
+返回单个事件；不存在返回 `404`。响应额外附带 `reminders` 字段（该事件生效的提醒分钟数组，如 `[60, 10]`；全天事件为 `[]`），供详情视图直接展示，无需二次请求。
 
 #### `PUT /api/events/:id`
 更新事件（可传部分字段）。`updated_at` 由服务器刷新。返回更新后的事件对象。
@@ -271,6 +271,14 @@ Idempotency-Key: <operation-uuid>
 响应：
 ```json
 { "ok": true, "data": { "created": 1, "updated": 0, "skipped": 0 } }
+```
+
+#### `POST /api/notifications/read-all`
+
+将所有未读通知一次性标为已读。返回本次更新的条数：
+
+```json
+{ "ok": true, "data": { "updated": 3 } }
 ```
 
 **去重验证示例**：连续两次导入同一个 `(source="agent", external_id="summer-2026-phys-01")`，第一次 `created:1`，第二次 `created:0, updated:1`，数据库中仅保留一行。

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "wrangler pages dev",
     "test:deadlines": "node tests/deadlines.test.mjs",
+    "test:reminders": "node tests/reminders.test.mjs",
     "test:series-patch": "node tests/series-patch.test.mjs",
     "db:local": "wrangler d1 migrations apply calendar-db --local",
     "db:remote": "wrangler d1 migrations apply calendar-db --remote",

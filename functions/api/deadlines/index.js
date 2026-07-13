@@ -2,7 +2,7 @@
 //   GET  list active deadlines by calendar date range
 //   POST create one deadline
 
-import { queryAll, run } from "../../_lib/db.js";
+import { queryAll, batch } from "../../_lib/db.js";
 import { ok, error } from "../../_lib/response.js";
 import {
   deadlineDateParam,
@@ -12,6 +12,7 @@ import {
   validateDeadlineInput,
 } from "../../_lib/deadlines.js";
 import { nowIso } from "../../_lib/events.js";
+import { deadlineReminderStatements } from "../../_lib/reminders.js";
 
 function isUniqueConflict(err) {
   return /UNIQUE constraint failed|unique/i.test(String(err?.message || err));
@@ -72,14 +73,11 @@ export async function onRequestPost(context) {
   };
 
   try {
-    await run(
-      env.DB,
-      `INSERT INTO deadlines
+    await batch(env.DB, [env.DB.prepare(`INSERT INTO deadlines
         (id, title, description, due_time, all_day, category, color, group_title,
          priority, source, external_id, created_at, updated_at, completed_at, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      Object.values(deadline),
-    );
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(...Object.values(deadline)), ...deadlineReminderStatements(env.DB, deadline)]);
   } catch (err) {
     if (isUniqueConflict(err)) return error("conflict", "A deadline with this source and external_id already exists", 409);
     throw err;

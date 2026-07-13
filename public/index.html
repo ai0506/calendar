@@ -21,6 +21,7 @@
         <button type="button" data-view="week">Week</button>
         <button type="button" data-view="day">Day</button>
       </div>
+      <button class="notification-btn" id="notificationsButton" type="button" aria-label="Notifications">🔔<span id="notificationBadge" hidden>0</span></button>
       <button class="add-btn" type="button" data-action="open-event">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       <span class="add-label">New</span>
@@ -89,6 +90,30 @@
             </div>
           </div>
           <div class="field-error" id="timeError">End time must be after start time.</div>
+
+          <div class="field" id="reminderFields">
+            <label>Reminders</label>
+            <div class="row2">
+              <select id="fReminderOne" aria-label="First reminder">
+                <option value="">No reminder</option>
+                <option value="10">10 minutes before</option>
+                <option value="15">15 minutes before</option>
+                <option value="30">30 minutes before</option>
+                <option value="60" selected>1 hour before</option>
+                <option value="120">2 hours before</option>
+                <option value="1440">1 day before</option>
+              </select>
+              <select id="fReminderTwo" aria-label="Second reminder">
+                <option value="">No second reminder</option>
+                <option value="10" selected>10 minutes before</option>
+                <option value="15">15 minutes before</option>
+                <option value="30">30 minutes before</option>
+                <option value="60">1 hour before</option>
+                <option value="120">2 hours before</option>
+                <option value="1440">1 day before</option>
+              </select>
+            </div>
+          </div>
 
           <div class="repeat-row">
             <label for="fRepeat">Repeat</label>
@@ -214,6 +239,13 @@
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <div class="scrim" id="notificationsScrim">
+    <div class="modal notifications-modal" role="dialog" aria-modal="true" aria-label="Notifications">
+      <div class="notifications-head"><h2>Notifications</h2><button type="button" class="btn-cancel" data-action="close-notifications">Close</button></div>
+      <div id="notificationsList" class="notifications-list"></div>
+    </div>
+  </div>
 
   <script src="/app.js" defer></script>
 </body>

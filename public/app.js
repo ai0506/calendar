@@ -34,6 +34,10 @@ let pendingDeadlineAction = null;
 let repeatIdempotencyKey = null;
 let repeatWeekdayTouched = false;
 let toastTimer = null;
+let notificationTimer = null;
+let notificationInFlight = false;
+const seenNotificationIds = new Set();
+let notificationItems = [];
 
 const els = {};
 
@@ -75,6 +79,9 @@ function cacheElements() {
     fEnd: document.getElementById("fEnd"),
     timeFields: document.getElementById("timeFields"),
     timeError: document.getElementById("timeError"),
+    reminderFields: document.getElementById("reminderFields"),
+    fReminderOne: document.getElementById("fReminderOne"),
+    fReminderTwo: document.getElementById("fReminderTwo"),
     catSwatches: document.getElementById("catSwatches"),
     fRepeat: document.getElementById("fRepeat"),
     repeatPanel: document.getElementById("repeatPanel"),
@@ -107,6 +114,10 @@ function cacheElements() {
     reopenTitle: document.getElementById("reopenTitle"),
     confirmReopenButton: document.getElementById("confirmReopenButton"),
     toast: document.getElementById("toast"),
+    notificationsButton: document.getElementById("notificationsButton"),
+    notificationBadge: document.getElementById("notificationBadge"),
+    notificationsScrim: document.getElementById("notificationsScrim"),
+    notificationsList: document.getElementById("notificationsList"),
   });
 }
 
@@ -116,6 +127,8 @@ function bindEvents() {
   document.querySelector("[data-action='today']").addEventListener("click", goToday);
   document.querySelector("[data-action='open-event']").addEventListener("click", () => openModal());
   document.querySelectorAll("[data-action='close-event']").forEach((button) => button.addEventListener("click", closeModal));
+  document.querySelector("[data-action='close-notifications']").addEventListener("click", closeNotifications);
+  els.notificationsButton.addEventListener("click", openNotifications);
   document.querySelector("[data-action='close-confirm']").addEventListener("click", closeConfirm);
   document.querySelector("[data-action='close-complete']").addEventListener("click", closeComplete);
   document.querySelector("[data-action='close-reopen']").addEventListener("click", closeReopen);
@@ -222,11 +235,13 @@ async function enterAuthenticatedApp() {
   await refreshVisibleData({ silent: false, force: true });
   startAutoRefresh();
   startClockRefresh();
+  startNotificationPolling();
 }
 
 function showLogin() {
   stopAutoRefresh();
   stopClockRefresh();
+  stopNotificationPolling();
   els.body.classList.remove("is-authenticated");
   els.topbar.setAttribute("aria-hidden", "true");
   els.bodySplit.setAttribute("aria-hidden", "true");
@@ -303,6 +318,91 @@ function startClockRefresh() {
 function stopClockRefresh() {
   if (clockTimer) clearInterval(clockTimer);
   clockTimer = null;
+}
+
+function startNotificationPolling() {
+  stopNotificationPolling();
+  pollNotifications();
+  notificationTimer = setInterval(pollNotifications, 45_000);
+}
+
+function stopNotificationPolling() {
+  if (notificationTimer) clearInterval(notificationTimer);
+  notificationTimer = null;
+  notificationInFlight = false;
+  seenNotificationIds.clear();
+  notificationItems = [];
+  updateNotificationBadge(0);
+}
+
+async function pollNotifications() {
+  if (notificationInFlight || !els.body.classList.contains("is-authenticated")) return;
+  notificationInFlight = true;
+  try {
+    const response = await apiFetch("/api/notifications?include_read=false&limit=50");
+    const items = response.data?.items || [];
+    notificationItems = items;
+    updateNotificationBadge(response.data?.unread_count || 0);
+    const newestByTarget = new Map();
+    items.slice().reverse().forEach((item) => newestByTarget.set(`${item.target_type}:${item.target_id}`, item));
+    newestByTarget.forEach((item) => {
+      if (seenNotificationIds.has(item.id)) return;
+      seenNotificationIds.add(item.id);
+      showToast(`${item.title}: ${item.message}`);
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification(item.title, { body: item.message });
+      }
+    });
+  } catch (err) {
+    // Notification polling is optional and must not interrupt the calendar.
+  } finally {
+    notificationInFlight = false;
+  }
+}
+
+function updateNotificationBadge(count) {
+  els.notificationBadge.hidden = !count;
+  els.notificationBadge.textContent = count > 99 ? "99+" : String(count || 0);
+}
+
+async function openNotifications() {
+  if ("Notification" in window && Notification.permission === "default") {
+    await Notification.requestPermission().catch(() => null);
+  }
+  try {
+    const response = await apiFetch("/api/notifications?include_read=true&limit=50");
+    notificationItems = response.data?.items || [];
+    updateNotificationBadge(response.data?.unread_count || 0);
+  } catch (err) {
+    showToast("Failed to load notifications.");
+  }
+  renderNotifications();
+  els.notificationsScrim.classList.add("open");
+}
+
+function closeNotifications() {
+  els.notificationsScrim.classList.remove("open");
+}
+
+function renderNotifications() {
+  if (!notificationItems.length) {
+    els.notificationsList.innerHTML = '<div class="notifications-empty">No notifications yet.</div>';
+    return;
+  }
+  els.notificationsList.innerHTML = notificationItems.map((item) => `<button type="button" class="notification-item ${item.read_at ? "" : "unread"}" data-notification-id="${escapeAttr(item.id)}">
+    <div class="notification-title">${escapeHtml(item.title)}</div>
+    <div class="notification-message">${escapeHtml(item.message)}</div>
+    <div class="notification-time">${new Date(item.created_at).toLocaleString()}</div>
+  </button>`).join("");
+  els.notificationsList.querySelectorAll("[data-notification-id]").forEach((button) => button.addEventListener("click", async () => {
+    const id = button.dataset.notificationId;
+    try {
+      await apiFetch(`/api/notifications/${encodeURIComponent(id)}`, { method: "PATCH" });
+      notificationItems = notificationItems.map((item) => item.id === id ? { ...item, read_at: new Date().toISOString() } : item);
+      updateNotificationBadge(notificationItems.filter((item) => !item.read_at).length);
+      renderNotifications();
+    } catch (err) { showToast("Failed to mark notification read."); }
+  }));
 }
 
 async function refreshVisibleData({ silent = true, force = false } = {}) {
@@ -982,6 +1082,8 @@ function openModal(prefillIso) {
   els.fAllday.checked = false;
   els.fStart.value = "09:00";
   els.fEnd.value = "10:00";
+  els.fReminderOne.value = "60";
+  els.fReminderTwo.value = "10";
   els.fRepeat.value = "none";
   els.fRepeatEnd.value = "date";
   els.fRepeatEndDate.value = addDateKey(els.fDate.value, 30);
@@ -1093,6 +1195,12 @@ async function submitEvent(event) {
     return;
   }
   const allDay = els.fAllday.checked;
+  const reminderValues = [els.fReminderOne.value, els.fReminderTwo.value]
+    .filter(Boolean).map(Number);
+  if (!allDay && new Set(reminderValues).size !== reminderValues.length) {
+    showToast("Choose two different reminder times.");
+    return;
+  }
   const category = getCategory(selectedCat);
   const start = allDay ? "00:00" : (els.fStart.value || "09:00");
   const end = allDay ? "23:59" : (els.fEnd.value || "10:00");
@@ -1104,6 +1212,7 @@ async function submitEvent(event) {
     category: category.name,
     color: category.color,
     source: "web",
+    ...(!allDay ? { reminders: reminderValues } : {}),
   };
 
   const requestPayload = repeat.value ? {
@@ -1176,6 +1285,7 @@ function toggleAllDayFields() {
   const isAllDay = els.fAllday.checked;
   els.timeFields.style.opacity = isAllDay ? "0.35" : "1";
   els.timeFields.style.pointerEvents = isAllDay ? "none" : "auto";
+  els.reminderFields.hidden = isAllDay;
   validateTimes();
 }
 

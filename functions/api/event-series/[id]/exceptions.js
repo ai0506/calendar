@@ -2,6 +2,7 @@ import { queryAll, queryOne, batch } from "../../../_lib/db.js";
 import { ok, error } from "../../../_lib/response.js";
 import { isValidIso, nowIso } from "../../../_lib/events.js";
 import { generateInstances, seriesRowToRequest } from "../../../_lib/recurrence.js";
+import { cancelTargetStatement, effectiveEventReminders, eventReminderStatements } from "../../../_lib/reminders.js";
 
 async function getActiveSeries(env, id) {
   return queryOne(env.DB, "SELECT * FROM event_series WHERE id = ? AND deleted_at IS NULL", [id]);
@@ -54,6 +55,9 @@ export async function onRequestPost(context) {
   if (existing) return ok({ ...existing, skipped: true });
 
   const now = nowIso();
+  const activeEvent = await queryOne(env.DB,
+    "SELECT id FROM events WHERE series_id = ? AND original_start_time = ? AND deleted_at IS NULL",
+    [params.id, originalStartTime]);
   const statements = [
     env.DB.prepare(`INSERT INTO event_exceptions
       (id, series_id, original_start_time, created_at, updated_at)
@@ -64,6 +68,7 @@ export async function onRequestPost(context) {
       WHERE series_id = ? AND original_start_time = ? AND deleted_at IS NULL`)
       .bind(now, now, params.id, originalStartTime),
   ];
+  if (activeEvent) statements.push(cancelTargetStatement(env.DB, "event", activeEvent.id, now));
 
   try {
     await batch(env.DB, statements);
@@ -108,6 +113,7 @@ export async function onRequestDelete(context) {
   if (!occurrence) return error("not_an_occurrence", "The exception no longer matches this series", 400);
 
   const now = nowIso();
+  const reminders = await effectiveEventReminders(env, null, params.id);
   const existing = await queryOne(
     env.DB,
     "SELECT * FROM events WHERE series_id = ? AND original_start_time = ? ORDER BY deleted_at IS NULL DESC LIMIT 1",
@@ -123,7 +129,11 @@ export async function onRequestDelete(context) {
       env.DB.prepare(`UPDATE events SET deleted_at = NULL, updated_at = ?
         WHERE id = ?`).bind(now, existing.id),
     );
+    statements.push(...eventReminderStatements(env.DB, {
+      id: existing.id, start_time: occurrence.instance.start_time, all_day: series.all_day,
+    }, reminders));
   } else {
+    const eventId = crypto.randomUUID();
     statements.push(
       env.DB.prepare(`INSERT INTO events
         (id, title, description, start_time, end_time, all_day, category, color,
@@ -131,13 +141,16 @@ export async function onRequestDelete(context) {
          original_start_time, created_at, updated_at, deleted_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .bind(
-          crypto.randomUUID(), series.title, series.description,
+          eventId, series.title, series.description,
           occurrence.instance.start_time, occurrence.instance.end_time,
           series.all_day, series.category, series.color, series.group_title,
           "series", null, params.id, occurrence.index,
           occurrence.instance.start_time, now, now, null,
         ),
     );
+    statements.push(...eventReminderStatements(env.DB, {
+      id: eventId, start_time: occurrence.instance.start_time, all_day: series.all_day,
+    }, reminders));
   }
 
   await batch(env.DB, statements);

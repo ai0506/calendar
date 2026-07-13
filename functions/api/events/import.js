@@ -3,9 +3,16 @@
 // 按 (source, external_id) 唯一约束去重：已存在则更新，不存在则新建。
 // 时间保持 ISO 8601 带时区偏移，不强制转 UTC（沿用 _lib/events.js 的校验逻辑）。
 
-import { queryOne, run } from "../../_lib/db.js";
+import { queryOne, batch } from "../../_lib/db.js";
 import { ok, error } from "../../_lib/response.js";
 import { validateEventInput, validateEventTemporalOrder, nowIso, toIntBool } from "../../_lib/events.js";
+import {
+  cancelTargetStatement,
+  configStatement,
+  effectiveEventReminders,
+  eventReminderStatements,
+  requestedReminders,
+} from "../../_lib/reminders.js";
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -35,6 +42,8 @@ export async function onRequestPost(context) {
       skipped++;
       continue;
     }
+    const reminderRequest = requestedReminders(item, toIntBool(item.all_day) === 1);
+    if (reminderRequest.error) { skipped++; continue; }
 
     const source = item.source ?? "web";
     const externalId = item.external_id ?? null;
@@ -53,57 +62,52 @@ export async function onRequestPost(context) {
     if (externalId) {
       existing = await queryOne(
         env.DB,
-        "SELECT id FROM events WHERE source = ? AND external_id = ? AND deleted_at IS NULL",
+        "SELECT * FROM events WHERE source = ? AND external_id = ? AND deleted_at IS NULL",
         [source, externalId],
       );
     }
 
     if (existing) {
-      await run(
-        env.DB,
-        `UPDATE events SET
+      const event = {
+        ...existing, title: item.title, description: item.description ?? null,
+        start_time: item.start_time, end_time: item.end_time ?? null, all_day: toIntBool(item.all_day),
+        category: item.category ?? null, color: eventColor, group_title: item.group_title ?? null, updated_at: now,
+      };
+      const changedPlan = existing.start_time !== event.start_time || existing.all_day !== event.all_day || reminderRequest.provided;
+      const reminders = reminderRequest.provided
+        ? reminderRequest.values
+        : await effectiveEventReminders(env, existing.id, existing.series_id || null);
+      const statements = [env.DB.prepare(`UPDATE events SET
            title = ?, description = ?, start_time = ?, end_time = ?, all_day = ?,
            category = ?, color = ?, group_title = ?, updated_at = ?
-         WHERE id = ?`,
-        [
-          item.title,
-          item.description ?? null,
-          item.start_time,
-          item.end_time ?? null,
-          toIntBool(item.all_day),
-          item.category ?? null,
-          eventColor,
-          item.group_title ?? null,
-          now,
-          existing.id,
-        ],
-      );
+         WHERE id = ?`).bind(event.title, event.description, event.start_time, event.end_time,
+        event.all_day, event.category, event.color, event.group_title, now, existing.id)];
+      if (changedPlan) {
+        statements.push(cancelTargetStatement(env.DB, "event", existing.id, now));
+        if (reminderRequest.provided) statements.push(configStatement(env.DB, "event_reminder_configs", "event_id", existing.id, reminders, now));
+        statements.push(...eventReminderStatements(env.DB, event, reminders));
+      }
+      await batch(env.DB, statements);
       updated++;
     } else {
       const id = crypto.randomUUID();
-      await run(
-        env.DB,
-        `INSERT INTO events
+      const event = {
+        id, title: item.title, description: item.description ?? null, start_time: item.start_time,
+        end_time: item.end_time ?? null, all_day: toIntBool(item.all_day), category: item.category ?? null,
+        color: eventColor, group_title: item.group_title ?? null, source, external_id: externalId,
+        created_at: now, updated_at: now, deleted_at: null,
+      };
+      const reminders = reminderRequest.provided ? reminderRequest.values : [60, 10];
+      const statements = [env.DB.prepare(`INSERT INTO events
            (id, title, description, start_time, end_time, all_day, category, color,
             group_title, source, external_id, created_at, updated_at, deleted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          item.title,
-          item.description ?? null,
-          item.start_time,
-          item.end_time ?? null,
-          toIntBool(item.all_day),
-          item.category ?? null,
-          eventColor,
-          item.group_title ?? null,
-          source,
-          externalId,
-          now,
-          now,
-          null,
-        ],
-      );
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+        event.id, event.title, event.description, event.start_time, event.end_time, event.all_day,
+        event.category, event.color, event.group_title, event.source, event.external_id,
+        event.created_at, event.updated_at, event.deleted_at)];
+      if (reminderRequest.provided) statements.push(configStatement(env.DB, "event_reminder_configs", "event_id", id, reminders, now));
+      statements.push(...eventReminderStatements(env.DB, event, reminders));
+      await batch(env.DB, statements);
       created++;
     }
   }

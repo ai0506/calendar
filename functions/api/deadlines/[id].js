@@ -3,7 +3,7 @@
 //   PUT    update editable fields
 //   DELETE soft-delete one deadline
 
-import { run } from "../../_lib/db.js";
+import { batch } from "../../_lib/db.js";
 import { ok, error } from "../../_lib/response.js";
 import {
   activeDeadline,
@@ -13,6 +13,7 @@ import {
   validateDeadlineInput,
 } from "../../_lib/deadlines.js";
 import { nowIso } from "../../_lib/events.js";
+import { cancelTargetStatement, deadlineReminderStatements } from "../../_lib/reminders.js";
 
 export async function onRequestGet(context) {
   const row = await activeDeadline(context.env, context.params.id);
@@ -47,7 +48,14 @@ export async function onRequestPut(context) {
   sets.push("updated_at = ?");
   values.push(nowIso(), params.id);
 
-  await run(env.DB, `UPDATE deadlines SET ${sets.join(", ")} WHERE id = ? AND deleted_at IS NULL`, values);
+  const changedPlan = input.due_time !== undefined || input.all_day !== undefined || input.priority !== undefined;
+  const updatedForPlan = { ...existing, ...input, all_day: input.all_day === undefined ? existing.all_day : input.all_day };
+  const statements = [env.DB.prepare(`UPDATE deadlines SET ${sets.join(", ")} WHERE id = ? AND deleted_at IS NULL`).bind(...values)];
+  if (changedPlan) {
+    statements.push(cancelTargetStatement(env.DB, "deadline", params.id, values[values.length - 2]));
+    statements.push(...deadlineReminderStatements(env.DB, updatedForPlan));
+  }
+  await batch(env.DB, statements);
   const updated = await activeDeadline(env, params.id);
   if (!updated) return error("not_found", "Deadline not found", 404);
   return ok(rowToDeadline(updated));
@@ -56,11 +64,11 @@ export async function onRequestPut(context) {
 export async function onRequestDelete(context) {
   const { env, params } = context;
   const now = nowIso();
-  const result = await run(
-    env.DB,
-    "UPDATE deadlines SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
-    [now, now, params.id],
-  );
-  if (!result.meta || result.meta.changes === 0) return error("not_found", "Deadline not found", 404);
+  const existing = await activeDeadline(env, params.id);
+  if (!existing) return error("not_found", "Deadline not found", 404);
+  await batch(env.DB, [
+    env.DB.prepare("UPDATE deadlines SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL").bind(now, now, params.id),
+    cancelTargetStatement(env.DB, "deadline", params.id, now),
+  ]);
   return ok({ id: params.id, deleted: true });
 }

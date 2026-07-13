@@ -9,6 +9,13 @@ import { validateEventInput, validateEventTemporalOrder } from "../../_lib/event
 import { generateInstances, rowToSeries, mergeSeriesPatch, validateRecurringRequest } from "../../_lib/recurrence.js";
 import { activeEventCount, insertInstanceStatement, seriesFromRequest } from "../../_lib/series.js";
 import { getIdempotencyKey, getOperation, hashRequest, isUniqueConflict } from "../../_lib/operations.js";
+import {
+  cancelSeriesStatement,
+  configStatement,
+  effectiveEventReminders,
+  eventReminderStatements,
+  requestedReminders,
+} from "../../_lib/reminders.js";
 
 async function getActiveSeries(env, id) {
   return queryOne(
@@ -86,6 +93,8 @@ export async function onRequestPatch(context) {
   if (temporalMessage) return error("validation_error", temporalMessage, 400);
   const recurrenceMessage = validateRecurringRequest(merged);
   if (recurrenceMessage) return error("validation_error", recurrenceMessage, 400);
+  const reminderRequest = requestedReminders(body, merged.all_day === true || merged.all_day === 1);
+  if (reminderRequest.error) return error("validation_error", reminderRequest.error, 400);
 
   let instances;
   try {
@@ -105,6 +114,9 @@ export async function onRequestPatch(context) {
   const now = nowIso();
   const updatedSeries = seriesFromRequest(merged, params.id, series.idempotency_key, now);
   updatedSeries.created_at = series.created_at;
+  const reminders = reminderRequest.provided
+    ? reminderRequest.values
+    : await effectiveEventReminders(env, null, params.id);
   const statements = [
     env.DB.prepare(`INSERT INTO event_operations
       (idempotency_key, operation_type, source_series_id, result_series_id, request_hash, created_at)
@@ -125,7 +137,11 @@ export async function onRequestPatch(context) {
       ),
     env.DB.prepare("UPDATE events SET deleted_at = ?, updated_at = ? WHERE series_id = ? AND deleted_at IS NULL")
       .bind(now, now, params.id),
+    cancelSeriesStatement(env.DB, params.id, now),
   ];
+  if (reminderRequest.provided) {
+    statements.push(configStatement(env.DB, "event_series_reminder_configs", "series_id", params.id, reminders, now));
+  }
   invalidExceptions.forEach((exception) => {
     statements.push(env.DB.prepare("DELETE FROM event_exceptions WHERE id = ? AND series_id = ?")
       .bind(exception.id, params.id));
@@ -133,7 +149,9 @@ export async function onRequestPatch(context) {
   const validExceptionSet = new Set(validExceptions.map((exception) => exception.original_start_time));
   instances.forEach((instance, index) => {
     if (!validExceptionSet.has(instance.start_time)) {
-      statements.push(insertInstanceStatement(env.DB, updatedSeries, instance, index, now));
+      const eventId = crypto.randomUUID();
+      statements.push(insertInstanceStatement(env.DB, updatedSeries, instance, index, now, eventId));
+      statements.push(...eventReminderStatements(env.DB, { id: eventId, start_time: instance.start_time, all_day: updatedSeries.all_day }, reminders));
     }
   });
 
@@ -166,6 +184,7 @@ export async function onRequestDelete(context) {
     env.DB.prepare(
       "UPDATE events SET deleted_at = ?, updated_at = ? WHERE series_id = ? AND deleted_at IS NULL",
     ).bind(now, now, params.id),
+    cancelSeriesStatement(env.DB, params.id, now),
   ]);
 
   return ok({ id: params.id, deleted: true });

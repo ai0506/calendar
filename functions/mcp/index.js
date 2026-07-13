@@ -56,6 +56,13 @@ import {
   rowToDeadline,
   validateDeadlineInput,
 } from "../_lib/deadlines.js";
+import {
+  cancelTargetStatement,
+  deadlineReminderStatements,
+  effectiveEventReminders,
+  eventReminderStatements,
+  requestedReminders,
+} from "../_lib/reminders.js";
 
 // 与客户端协商的协议版本。若客户端请求了具体版本则回显，否则用此默认值。
 const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
@@ -118,6 +125,10 @@ const EVENT_WRITE_PROPERTIES = {
       "不确定用什么颜色时优先用 \"default\"，会自动采用 category 的颜色。",
   },
   group_title: { type: "string", description: "分组标题（可选）" },
+  reminders: {
+    type: "array", items: { type: "integer", enum: [10, 15, 30, 60, 120, 1440] }, maxItems: 2,
+    description: "可选，开始前提醒分钟数；最多两个。空数组关闭提醒。",
+  },
 };
 
 const DEADLINE_WRITE_PROPERTIES = {
@@ -482,7 +493,11 @@ async function runCreateDeadline(env, args = {}) {
   const message = validateDeadlineInput(args, true); if (message) throw new Error(message);
   const input = normalizeDeadlineInput(args); const now = nowIso();
   const deadline = { id: crypto.randomUUID(), title: input.title.trim(), description: input.description ?? null, due_time: input.due_time, all_day: input.all_day === 1 ? 1 : 0, category: input.category ?? null, color: input.color ?? null, group_title: input.group_title ?? null, priority: input.priority || "default", source: input.source || "mcp", external_id: input.external_id ?? null, created_at: now, updated_at: now, completed_at: null, deleted_at: null };
-  await run(env.DB, "INSERT INTO deadlines (id, title, description, due_time, all_day, category, color, group_title, priority, source, external_id, created_at, updated_at, completed_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", Object.values(deadline));
+  await batch(env.DB, [
+    env.DB.prepare("INSERT INTO deadlines (id, title, description, due_time, all_day, category, color, group_title, priority, source, external_id, created_at, updated_at, completed_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(...Object.values(deadline)),
+    ...deadlineReminderStatements(env.DB, deadline),
+  ]);
   return rowToDeadline(deadline);
 }
 
@@ -499,22 +514,54 @@ async function runUpdateDeadline(env, args = {}) {
   const message = validateDeadlineInput({ ...existing, ...body }, true); if (message) throw new Error(message);
   const input = normalizeDeadlineInput(body); const sets = []; const values = [];
   for (const field of deadlineFields()) { if (field === "source" || field === "external_id" || input[field] === undefined) continue; sets.push(`${field} = ?`); values.push(field === "all_day" ? input[field] : field === "title" ? input[field].trim() : input[field]); }
-  sets.push("updated_at = ?"); values.push(nowIso(), args.id);
-  await run(env.DB, `UPDATE deadlines SET ${sets.join(", ")} WHERE id = ? AND deleted_at IS NULL`, values);
+  const now = nowIso();
+  sets.push("updated_at = ?"); values.push(now, args.id);
+  const needsReplan = input.due_time !== undefined || input.all_day !== undefined || input.priority !== undefined;
+  const updatedDeadline = {
+    ...existing,
+    ...input,
+    title: input.title === undefined ? existing.title : input.title.trim(),
+    all_day: input.all_day === undefined ? existing.all_day : input.all_day,
+    updated_at: now,
+  };
+  const statements = [
+    env.DB.prepare(`UPDATE deadlines SET ${sets.join(", ")} WHERE id = ? AND deleted_at IS NULL`).bind(...values),
+  ];
+  if (needsReplan) {
+    statements.push(cancelTargetStatement(env.DB, "deadline", args.id, now));
+    statements.push(...deadlineReminderStatements(env.DB, updatedDeadline));
+  }
+  await batch(env.DB, statements);
   return rowToDeadline(await activeDeadline(env, args.id));
 }
 
 async function runDeleteDeadline(env, args = {}) {
   if (typeof args.id !== "string" || args.id.trim() === "") throw new Error("id is required");
-  const now = nowIso(); const result = await run(env.DB, "UPDATE deadlines SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL", [now, now, args.id]);
-  if (!result.meta || result.meta.changes === 0) throw new Error("Deadline not found"); return { id: args.id, deleted: true };
+  const now = nowIso();
+  const existing = await activeDeadline(env, args.id); if (!existing) throw new Error("Deadline not found");
+  await batch(env.DB, [
+    env.DB.prepare("UPDATE deadlines SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL").bind(now, now, args.id),
+    cancelTargetStatement(env.DB, "deadline", args.id, now),
+  ]);
+  return { id: args.id, deleted: true };
 }
 
 async function runSetDeadlineCompletion(env, args = {}, complete) {
   if (typeof args.id !== "string" || args.id.trim() === "") throw new Error("id is required");
   const timestamp = nowIso();
-  if (complete) await run(env.DB, "UPDATE deadlines SET completed_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL AND completed_at IS NULL", [timestamp, timestamp, args.id]);
-  else await run(env.DB, "UPDATE deadlines SET completed_at = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL AND completed_at IS NOT NULL", [timestamp, args.id]);
+  if (complete) {
+    await batch(env.DB, [
+      env.DB.prepare("UPDATE deadlines SET completed_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL AND completed_at IS NULL").bind(timestamp, timestamp, args.id),
+      cancelTargetStatement(env.DB, "deadline", args.id, timestamp),
+    ]);
+  } else {
+    const existing = await activeDeadline(env, args.id); if (!existing) throw new Error("Deadline not found");
+    await batch(env.DB, [
+      env.DB.prepare("UPDATE deadlines SET completed_at = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL AND completed_at IS NOT NULL").bind(timestamp, args.id),
+      cancelTargetStatement(env.DB, "deadline", args.id, timestamp),
+      ...deadlineReminderStatements(env.DB, { ...existing, completed_at: null, updated_at: timestamp }),
+    ]);
+  }
   const current = await activeDeadline(env, args.id); if (!current) throw new Error("Deadline not found"); return rowToDeadline(current);
 }
 
@@ -543,6 +590,8 @@ async function runCreateEvent(env, args = {}) {
   if (msg) throw new Error(msg);
   const temporalMsg = validateEventTemporalOrder(args);
   if (temporalMsg) throw new Error(temporalMsg);
+  const reminderRequest = requestedReminders(args, toIntBool(args.all_day) === 1);
+  if (reminderRequest.error) throw new Error(reminderRequest.error);
 
   const now = nowIso();
   const event = {
@@ -562,20 +611,24 @@ async function runCreateEvent(env, args = {}) {
     deleted_at: null,
   };
 
-  await run(
-    env.DB,
-    `INSERT INTO events
+  const reminders = reminderRequest.provided ? reminderRequest.values : [60, 10];
+  const statements = [env.DB.prepare(`INSERT INTO events
        (id, title, description, start_time, end_time, all_day, category, color,
         group_title, source, external_id, created_at, updated_at, deleted_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(
       event.id, event.title, event.description, event.start_time, event.end_time,
       event.all_day, event.category, event.color, event.group_title, event.source,
       event.external_id, event.created_at, event.updated_at, event.deleted_at,
-    ],
-  );
+    )];
+  if (reminderRequest.provided) {
+    statements.push(env.DB.prepare(`INSERT INTO event_reminder_configs (event_id, mode, reminders_json, updated_at)
+      VALUES (?, ?, ?, ?)`).bind(event.id, reminders.length ? "custom" : "disabled", reminders.length ? JSON.stringify(reminders) : null, now));
+  }
+  statements.push(...eventReminderStatements(env.DB, event, reminders));
+  await batch(env.DB, statements);
 
-  return rowToEvent(event);
+  return { ...rowToEvent(event), reminders };
 }
 
 // 对应 PUT /api/events/:id
@@ -589,10 +642,17 @@ async function runUpdateEvent(env, args = {}) {
   const body = { ...args };
   delete body.id;
 
+  if (existing.series_id && Object.prototype.hasOwnProperty.call(body, "reminders")) {
+    throw new Error("reminders for a recurring occurrence must be changed through the event series");
+  }
+
   const msg = validateEventInput(body, false);
   if (msg) throw new Error(msg);
   const temporalMsg = validateEventTemporalOrder({ ...existing, ...body });
   if (temporalMsg) throw new Error(temporalMsg);
+  const mergedAllDay = body.all_day === undefined ? existing.all_day : toIntBool(body.all_day);
+  const reminderRequest = requestedReminders(body, mergedAllDay === 1);
+  if (reminderRequest.error) throw new Error(reminderRequest.error);
 
   // 仅改 category 而未显式指定 color 时，继承该分类颜色（与 REST 一致）
   if (
@@ -622,13 +682,22 @@ async function runUpdateEvent(env, args = {}) {
   values.push(now);
   values.push(id);
 
-  await run(
-    env.DB,
-    `UPDATE events SET ${sets.join(", ")} WHERE id = ? AND deleted_at IS NULL`,
-    values,
-  );
+  const needsReplan = body.start_time !== undefined || body.all_day !== undefined || reminderRequest.provided;
+  const statements = [env.DB.prepare(`UPDATE events SET ${sets.join(", ")} WHERE id = ? AND deleted_at IS NULL`).bind(...values)];
+  let reminders = null;
+  if (needsReplan) {
+    reminders = reminderRequest.provided ? reminderRequest.values : await effectiveEventReminders(env, id, existing.series_id || null);
+    statements.push(cancelTargetStatement(env.DB, "event", id, now));
+    if (reminderRequest.provided) {
+      statements.push(env.DB.prepare(`INSERT INTO event_reminder_configs (event_id, mode, reminders_json, updated_at)
+        VALUES (?, ?, ?, ?) ON CONFLICT(event_id) DO UPDATE SET mode=excluded.mode, reminders_json=excluded.reminders_json, updated_at=excluded.updated_at`)
+        .bind(id, reminders.length ? "custom" : "disabled", reminders.length ? JSON.stringify(reminders) : null, now));
+    }
+    statements.push(...eventReminderStatements(env.DB, { ...existing, ...body, id, all_day: mergedAllDay }, reminders));
+  }
+  await batch(env.DB, statements);
 
-  return rowToEvent(await getActiveEvent(env, id));
+  return { ...rowToEvent(await getActiveEvent(env, id)), ...(reminders ? { reminders } : {}) };
 }
 
 // 对应 DELETE /api/events/:id （软删除）
@@ -637,12 +706,12 @@ async function runDeleteEvent(env, args = {}) {
   if (typeof id !== "string" || id === "") throw new Error("id is required");
 
   const now = nowIso();
-  const result = await run(
-    env.DB,
-    "UPDATE events SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
-    [now, now, id],
-  );
-  if (!result.meta || result.meta.changes === 0) throw new Error("Event not found");
+  const existing = await getActiveEvent(env, id);
+  if (!existing) throw new Error("Event not found");
+  await batch(env.DB, [
+    env.DB.prepare("UPDATE events SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL").bind(now, now, id),
+    cancelTargetStatement(env.DB, "event", id, now),
+  ]);
   return { id, deleted: true };
 }
 

@@ -2,7 +2,7 @@
 //   GET  列出事件（支持 from / to / category 过滤，默认排除软删除）
 //   POST 创建事件（服务器生成 id / created_at / updated_at）
 
-import { queryAll, run } from "../../_lib/db.js";
+import { queryAll, batch } from "../../_lib/db.js";
 import { ok, error } from "../../_lib/response.js";
 import {
   validateEventInput,
@@ -11,6 +11,7 @@ import {
   nowIso,
   toIntBool,
 } from "../../_lib/events.js";
+import { configStatement, eventReminderStatements, requestedReminders } from "../../_lib/reminders.js";
 
 // GET /api/events?from=&to=&category=
 export async function onRequestGet(context) {
@@ -55,6 +56,8 @@ export async function onRequestPost(context) {
   if (msg) return error("validation_error", msg, 400);
   const temporalMsg = validateEventTemporalOrder(body);
   if (temporalMsg) return error("validation_error", temporalMsg, 400);
+  const reminderRequest = requestedReminders(body, toIntBool(body.all_day) === 1);
+  if (reminderRequest.error) return error("validation_error", reminderRequest.error, 400);
 
   const id = crypto.randomUUID();
   const now = nowIso();
@@ -76,13 +79,11 @@ export async function onRequestPost(context) {
     deleted_at: null,
   };
 
-  await run(
-    env.DB,
-    `INSERT INTO events
+  const statements = [env.DB.prepare(`INSERT INTO events
        (id, title, description, start_time, end_time, all_day, category, color,
         group_title, source, external_id, created_at, updated_at, deleted_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(
       event.id,
       event.title,
       event.description,
@@ -97,8 +98,13 @@ export async function onRequestPost(context) {
       event.created_at,
       event.updated_at,
       event.deleted_at,
-    ],
-  );
+    )];
+  const reminders = reminderRequest.provided ? reminderRequest.values : [60, 10];
+  if (reminderRequest.provided) {
+    statements.push(configStatement(env.DB, "event_reminder_configs", "event_id", id, reminders, now));
+  }
+  statements.push(...eventReminderStatements(env.DB, event, reminders));
+  await batch(env.DB, statements);
 
-  return ok(rowToEvent(event), 201);
+  return ok({ ...rowToEvent(event), reminders }, 201);
 }

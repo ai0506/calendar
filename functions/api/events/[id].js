@@ -3,7 +3,7 @@
 //   PUT    更新事件（刷新 updated_at，不允许改 id）
 //   DELETE 软删除（设置 deleted_at，刷新 updated_at）
 
-import { queryOne, run } from "../../_lib/db.js";
+import { queryOne, batch } from "../../_lib/db.js";
 import { ok, error } from "../../_lib/response.js";
 import {
   validateEventInput,
@@ -12,6 +12,13 @@ import {
   nowIso,
   toIntBool,
 } from "../../_lib/events.js";
+import {
+  cancelTargetStatement,
+  configStatement,
+  effectiveEventReminders,
+  eventReminderStatements,
+  requestedReminders,
+} from "../../_lib/reminders.js";
 
 // 可被 PUT 更新的字段（id / created_at 不可改）
 const UPDATABLE = [
@@ -55,11 +62,18 @@ export async function onRequestPut(context) {
     return error("validation_error", "Request body must be a JSON object", 400);
   }
 
+  if (existing.series_id && Object.prototype.hasOwnProperty.call(body, "reminders")) {
+    return error("validation_error", "reminders for a recurring occurrence must be changed through the event series", 400);
+  }
+
   const msg = validateEventInput(body, false);
   if (msg) return error("validation_error", msg, 400);
 
   const temporalMsg = validateEventTemporalOrder({ ...existing, ...body });
   if (temporalMsg) return error("validation_error", temporalMsg, 400);
+  const mergedAllDay = body.all_day === undefined ? existing.all_day : toIntBool(body.all_day);
+  const reminderRequest = requestedReminders(body, mergedAllDay === 1);
+  if (reminderRequest.error) return error("validation_error", reminderRequest.error, 400);
 
   // Changing only the category should also follow that category's color.
   // An explicitly supplied color still wins, so custom event colors remain supported.
@@ -86,29 +100,36 @@ export async function onRequestPut(context) {
   values.push(now);
   values.push(params.id);
 
-  await run(
-    env.DB,
-    `UPDATE events SET ${sets.join(", ")} WHERE id = ? AND deleted_at IS NULL`,
-    values,
-  );
+  const updatedForPlan = { ...existing, ...body, all_day: mergedAllDay, id: params.id };
+  const needsReplan = body.start_time !== undefined || body.all_day !== undefined || reminderRequest.provided;
+  const statements = [env.DB.prepare(`UPDATE events SET ${sets.join(", ")} WHERE id = ? AND deleted_at IS NULL`).bind(...values)];
+  let reminders = null;
+  if (needsReplan) {
+    reminders = reminderRequest.provided
+      ? reminderRequest.values
+      : await effectiveEventReminders(env, params.id, existing.series_id || null);
+    statements.push(cancelTargetStatement(env.DB, "event", params.id, now));
+    if (reminderRequest.provided) {
+      statements.push(configStatement(env.DB, "event_reminder_configs", "event_id", params.id, reminders, now));
+    }
+    statements.push(...eventReminderStatements(env.DB, updatedForPlan, reminders));
+  }
+  await batch(env.DB, statements);
 
   const updated = await getActive(env, params.id);
-  return ok(rowToEvent(updated));
+  return ok({ ...rowToEvent(updated), ...(reminders ? { reminders } : {}) });
 }
 
 // DELETE /api/events/:id  —— 软删除
 export async function onRequestDelete(context) {
   const { env, params } = context;
   const now = nowIso();
-
-  const result = await run(
-    env.DB,
-    "UPDATE events SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
-    [now, now, params.id],
-  );
-
-  if (!result.meta || result.meta.changes === 0) {
-    return error("not_found", "Event not found", 404);
-  }
+  const existing = await getActive(env, params.id);
+  if (!existing) return error("not_found", "Event not found", 404);
+  await batch(env.DB, [
+    env.DB.prepare("UPDATE events SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
+      .bind(now, now, params.id),
+    cancelTargetStatement(env.DB, "event", params.id, now),
+  ]);
   return ok({ id: params.id, deleted: true });
 }

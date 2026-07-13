@@ -77,3 +77,11 @@
 - 2026-07-10：本地 `wrangler pages dev` + local D1 冒烟测试通过主要 Phase 1 API 路径。
 - 2026-07-10：`node --check` 通过认证相关文件语法检查。
 - 2026-07-10：Wrangler 3.114.17 会提示 compatibility date 回退，已在 `BUGS.md` 记录为低优先级环境问题。
+# Notifications Phase 1
+
+- [ ] 普通 Event 默认生成 `event:60` 和 `event:10`；custom/disabled 配置保存正确。
+- [ ] Event 改期、改提醒、删除后旧 pending reminder 被取消，新计划不与历史 reminder key 冲突。
+- [ ] 全天 Event 在上海时间 09:00 生成一条提醒，非空 custom reminders 返回 400。
+- [ ] DDL 的 high/default/low、due/due_today、complete/reopen/delete 生命周期正确。
+- [ ] 重复系列 PATCH、exception 恢复、split 和 import 不丢失或重复提醒。
+- [ ] `GET /api/notifications` 重复调用不会为同一 reminder 创建重复 notification。

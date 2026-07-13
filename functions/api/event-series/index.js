@@ -9,6 +9,7 @@ import {
   validateRecurringRequest,
 } from "../../_lib/recurrence.js";
 import { insertInstanceStatement, insertSeriesStatement, seriesFromRequest } from "../../_lib/series.js";
+import { configStatement, eventReminderStatements, requestedReminders } from "../../_lib/reminders.js";
 
 function eventCount(env, seriesId) {
   return queryOne(
@@ -40,6 +41,8 @@ export async function onRequestPost(context) {
   if (eventMessage) return error("validation_error", eventMessage, 400);
   const recurrenceMessage = validateRecurringRequest(body);
   if (recurrenceMessage) return error("validation_error", recurrenceMessage, 400);
+  const reminderRequest = requestedReminders(body, toIntBool(body.all_day) === 1);
+  if (reminderRequest.error) return error("validation_error", reminderRequest.error, 400);
 
   const existing = await queryOne(
     env.DB,
@@ -63,9 +66,15 @@ export async function onRequestPost(context) {
     seriesId, body.idempotency_key, now);
 
   const statements = [insertSeriesStatement(env.DB, series)];
+  const reminders = reminderRequest.provided ? reminderRequest.values : [60, 10];
+  if (reminderRequest.provided) {
+    statements.push(configStatement(env.DB, "event_series_reminder_configs", "series_id", seriesId, reminders, now));
+  }
 
   instances.forEach((instance, index) => {
-    statements.push(insertInstanceStatement(env.DB, series, instance, index));
+    const eventId = crypto.randomUUID();
+    statements.push(insertInstanceStatement(env.DB, series, instance, index, now, eventId));
+    statements.push(...eventReminderStatements(env.DB, { id: eventId, start_time: instance.start_time, all_day: series.all_day }, reminders));
   });
 
   try {

@@ -327,10 +327,11 @@ body.is-portrait .inspector{
   min-height:38px; border-top:1px solid var(--hairline); font-size:13px;
 }
 .repeat-row label, .repeat-end-row label{ color:var(--ink); font-weight:500; }
-.repeat-row select, .repeat-end-row select, .repeat-end-input input{
+.repeat-row select, .repeat-end-row select, .repeat-end-input input, #reminderFields select{
   min-width:155px; border:1px solid var(--hairline); border-radius:9px;
   padding:7px 9px; font:inherit; color:var(--ink); background:var(--soft);
 }
+#reminderFields select{ width:100%; min-width:0; }
 .repeat-panel{
   max-height:250px; overflow-y:auto; scrollbar-gutter:stable;
   padding:2px 2px 0 3px;
@@ -426,6 +427,19 @@ body.is-portrait .inspector{
   transition:opacity .25s ease, transform .25s ease; z-index:200;
 }
 .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+.notification-btn{ position:relative; border:0; background:transparent; font:inherit; font-size:16px; cursor:pointer; padding:7px; border-radius:9px; }
+.notification-btn:hover{ background:var(--soft); }
+.notification-btn span{ position:absolute; right:0; top:0; min-width:15px; height:15px; padding:0 3px; border-radius:9px; background:var(--danger); color:#fff; font:700 9px/15px inherit; }
+.notifications-modal{ width:420px; max-height:min(580px, calc(100vh - 32px)); display:flex; flex-direction:column; }
+.notifications-head{ display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.notifications-head h2{ margin-bottom:0; }
+.notifications-list{ overflow:auto; margin-top:16px; border-top:1px solid var(--hairline); }
+.notification-item{ display:block; width:100%; text-align:left; font-family:inherit; color:inherit; background:transparent; border:0; padding:12px 2px; border-bottom:1px solid var(--hairline); cursor:pointer; }
+.notification-item:hover{ background:var(--soft); }
+.notification-item.unread .notification-title{ font-weight:700; }
+.notification-title{ font-size:13px; }
+.notification-message,.notification-time{ font-size:11.5px; color:var(--muted); margin-top:3px; }
+.notifications-empty{ padding:20px 0; color:var(--muted); font-size:13px; }
 
 button, select, input[type=checkbox]{ user-select:none; }
 .repeat-mark{ display:inline-block; margin-left:4px; color:currentColor; opacity:.72; font-size:.9em; }

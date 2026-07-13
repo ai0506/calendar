@@ -86,11 +86,15 @@ Phase 1 使用单一 `API_TOKEN`（环境变量）。
 ```
 成功：`201`，返回创建的事件对象。
 
+可选 `reminders` 为最多两个提醒分钟数，例如 `[60, 10]`。未提供时默认使用 `[60, 10]`；`[]` 明确关闭提醒。允许值为 `10`、`15`、`30`、`60`、`120`、`1440`。全天 Event 不接受非空 `reminders`。
+
 #### `GET /api/events/:id`
 返回单个事件；不存在返回 `404`。
 
 #### `PUT /api/events/:id`
 更新事件（可传部分字段）。`updated_at` 由服务器刷新。返回更新后的事件对象。
+
+未提供 `reminders` 时保留既有默认/custom/disabled 配置；显式 `[]` 关闭，非空数组替换为 custom 配置。重复系列的单个 occurrence 不允许在此端点修改 `reminders`，应通过系列 PATCH 修改。
 
 #### `DELETE /api/events/:id`
 **软删除**：设置 `deleted_at`，不物理删除。返回 `{ "ok": true, "data": { "id": "...", "deleted": true } }`。
@@ -246,6 +250,23 @@ Idempotency-Key: <operation-uuid>
 - 同 `(source, external_id)` 已存在 → **更新**该事件（title / description / 时间 / category / color / group_title，`updated_at` 刷新）。
 - 不存在（或未提供 `external_id`）→ **新建**。
 - 单条事件缺少必填字段（`title` / `start_time`）→ 计入 `skipped`，不中断整批。
+- 导入项可带 `reminders`，规则与 Event POST/PUT 相同；更新时未提供则保留已有提醒配置。
+
+---
+
+### 通知 (Notifications)
+
+#### `GET /api/notifications?include_read=false&limit=50`
+
+读取通知前会派发已到期的 server-side reminder。默认只返回未读通知；`limit` 范围为 1–100。返回：
+
+```json
+{ "ok": true, "data": { "items": [], "unread_count": 0 } }
+```
+
+#### `PATCH /api/notifications/:id`
+
+将指定通知标为已读。提醒计划、通知记录和已读状态均由服务端保存；同一 reminder 最多生成一条通知。
 
 响应：
 ```json

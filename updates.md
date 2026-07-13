@@ -401,3 +401,14 @@
 [Codex][260713001833] 移除 Inspector、竖屏详情和月视图日期格中的 Add Event 入口，创建 Event/Deadline 统一只使用顶部 New 按钮。
 [Codex][260712232601] 新增单次 Deadline 的 MCP 工具（查询、创建、读取、修改、删除、完成、重开），并同步更新 API_DOC.md 与 MCP_DEPLOY.md 的能力说明和使用约定。
 [Codex][260713002108] 为 Deadline MCP 的 7 个工具增加 outputSchema，明确列表、DDL 对象和软删除结果的返回结构，帮助模型稳定理解工具输出。
+[Codex][260713132828] 新增 production/NOTIFICATION_PHASE1_PLAN.md，基于当前 Event/DDL 后端生命周期、重复事件实例、前端刷新与倒计时逻辑，设计 Phase 1 通知执行方案及 Event 最多两个自定义提醒时间。
+[Codex][260713132828] 修订 production/NOTIFICATION_PHASE1_PLAN.md：补充 Event/系列提醒配置持久化、统一 reminders 模型与 reminder_key、系列 PATCH/except/split、Event import、MCP 写操作、全天 DDL 日期算法、D1 batch 原子 dispatch、通知保留期限，并拆分服务端基础与通知展示阶段。
+[Codex][260713134156] 再次修订通知计划：明确 POST/PUT/import 的 reminders 配置继承语义，增加定时 DDL 的 deadline:due，拒绝全天 Event 的非空自定义提醒，明确通过 events.series_id 子查询批量取消系列 occurrence 提醒，并补充对应测试。
+[Codex][260713134428] 修订通知计划：统一 deadline:due 与 deadline:due_today key，明确重复 occurrence 不允许单独修改 reminders、必须通过 series PATCH，并补充 POST/PUT/import/series 配置继承测试和 DDL key 测试。
+[Codex][260713134920] 修订通知计划范围与架构前提：明确当前仓库 MCP 无 DDL/import 工具并移出 Phase 1，区分 REST/MCP 独立接入工作，说明现有项目不存在统一写入业务层，避免低估提醒模块接入和 D1 batch 集成成本。
+[Codex][260713135558] 修订通知计划：补充 MCP 无操作级 Idempotency-Key 的 UNIQUE 兜底边界、延迟派发按实际剩余时间生成文案、定时 DDL 已过提前提醒标记 skipped，以及首次打开时同一目标多条提醒的 Toast 合并策略和测试项。
+[Codex][260713135905] 修复通知计划中的提醒唯一性冲突：将 reminders 的全状态唯一约束改为仅针对 pending 状态的 SQLite 部分唯一索引，保留 cancelled/sent/skipped 历史行并允许同 key 重算，补充 Event 改期、配置切换和 DDL priority 切换测试。
+[Codex][260713141039] 实施 Notification Phase 1：新增 0009 通知迁移和共享 reminders 模块，接入 Event/DDL/重复系列/导入/MCP Event 的提醒生命周期，新增通知 API、前端自定义提醒选择器与轮询，补充提醒单元测试并同步项目、API、测试与变更文档。
+[Codex][260713141204] 补齐通知前端交互：新增未读徽标、通知列表与已读操作，并在用户点击通知按钮时请求浏览器 Notification 权限，避免登录时自动弹出权限请求。
+[Codex][260713143222] 修复提醒派发临界条件：全天 Event 的 09:00 提醒不再被开始时间误标 skipped；定时 DDL 的 deadline:due 不再因 overdue 状态误取消。新增两项派发状态回归测试。
+[Codex][260713145047] 合并远端 Deadline MCP 工具更新与通知功能：保留 Deadline MCP outputSchema，并将 MCP Deadline 创建、改期、删除、完成和重开接入 reminders 计划生成、取消与重建逻辑。

@@ -42,14 +42,14 @@ export function insertSeriesStatement(db, series) {
     );
 }
 
-export function insertInstanceStatement(db, series, instance, index, now = series.created_at) {
+export function insertInstanceStatement(db, series, instance, index, now = series.created_at, eventId = crypto.randomUUID()) {
   return db.prepare(`INSERT INTO events
     (id, title, description, start_time, end_time, all_day, category, color,
      group_title, source, external_id, series_id, recurrence_index,
      original_start_time, created_at, updated_at, deleted_at)
    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(
-      crypto.randomUUID(), series.title, series.description, instance.start_time,
+      eventId, series.title, series.description, instance.start_time,
       instance.end_time, series.all_day, series.category, series.color,
       series.group_title, "series", null, series.id, index, instance.start_time,
       now, now, null,

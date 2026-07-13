@@ -11,6 +11,7 @@ import {
 } from "../../../_lib/recurrence.js";
 import { insertInstanceStatement, insertSeriesStatement, seriesFromRequest } from "../../../_lib/series.js";
 import { getIdempotencyKey, getOperation, hashRequest, isUniqueConflict } from "../../../_lib/operations.js";
+import { cancelSeriesFromStatement, effectiveEventReminders, eventReminderStatements } from "../../../_lib/reminders.js";
 
 async function getActiveSeries(env, id) {
   return queryOne(env.DB, "SELECT * FROM event_series WHERE id = ? AND deleted_at IS NULL", [id]);
@@ -109,6 +110,9 @@ export async function onRequestPost(context) {
   const now = nowIso();
   const newSeriesId = crypto.randomUUID();
   const newSeries = seriesFromRequest(newBody, newSeriesId, crypto.randomUUID(), now);
+  const reminders = await effectiveEventReminders(env, null, params.id);
+  const reminderConfig = await queryOne(env.DB,
+    "SELECT mode, reminders_json FROM event_series_reminder_configs WHERE series_id = ?", [params.id]);
   const statements = [
     env.DB.prepare(`INSERT INTO event_operations
       (idempotency_key, operation_type, source_series_id, result_series_id, request_hash, created_at)
@@ -119,14 +123,22 @@ export async function onRequestPost(context) {
     env.DB.prepare(`UPDATE events SET deleted_at = ?, updated_at = ?
       WHERE series_id = ? AND substr(original_start_time, 1, 10) >= ? AND deleted_at IS NULL`)
       .bind(now, now, params.id, body.split_date),
+    cancelSeriesFromStatement(env.DB, params.id, body.split_date, now),
     env.DB.prepare(`UPDATE event_exceptions SET series_id = ?, updated_at = ?
       WHERE series_id = ? AND substr(original_start_time, 1, 10) >= ?`)
       .bind(newSeriesId, now, params.id, body.split_date),
     insertSeriesStatement(env.DB, newSeries),
   ];
+  if (reminderConfig) {
+    statements.push(env.DB.prepare(`INSERT INTO event_series_reminder_configs
+      (series_id, mode, reminders_json, updated_at) VALUES (?, ?, ?, ?)`)
+      .bind(newSeriesId, reminderConfig.mode, reminderConfig.reminders_json, now));
+  }
   newInstances.forEach((instance, index) => {
     if (!migratedExceptions.has(instance.start_time)) {
-      statements.push(insertInstanceStatement(env.DB, newSeries, instance, index, now));
+      const eventId = crypto.randomUUID();
+      statements.push(insertInstanceStatement(env.DB, newSeries, instance, index, now, eventId));
+      statements.push(...eventReminderStatements(env.DB, { id: eventId, start_time: instance.start_time, all_day: newSeries.all_day }, reminders));
     }
   });
 

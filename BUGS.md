@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-Phase 1 后端基础已完成：认证、events CRUD、categories、import、export、D1 绑定与迁移均已实现。本地冒烟测试已覆盖主要 API 路径。
+Phase 1 核心功能已完成：认证、events CRUD、categories、import、export、重复系列、Deadline、通知、Web 前端和 D1 绑定与迁移均已实现。当前仍需完成通知 API 的完整本地联调和生产部署验收。
 
 ### [BUG-0001] localhost 开发环境 Secure Cookie 导致登录态不可用
 - 状态：Fixed

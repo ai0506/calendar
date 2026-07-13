@@ -6,10 +6,11 @@
 ## [Unreleased]
 
 ### 计划中
-- 前端日历 UI（Vanilla JS + FullCalendar）
 - Android / Flutter App
+- 完整浏览器端到端测试与生产部署验收
 
 ### 已完成
+- Web 首版日历 UI：事件与 Deadline 的月/周/日视图、创建与详情窗口、重复事件、优先级、分类颜色、通知入口和提醒配置。
 - Notification Phase 1：D1 提醒配置、计划和站内通知表；Event 最多两个自定义提醒；DDL priority 提醒；Event/DDL/系列/import/MCP Event 生命周期接入；通知轮询与浏览器通知支持。
 - 重复事件系列首版：规则创建、实例生成、幂等提交、系列查询、单次/系列软删除，以及 New Event Modal 内的 Repeat 配置。
 - 项目文档初始化：PROJECT_SPEC / API_DOC / BUGS / CHANGELOG / TEST_CHECKLIST / updates

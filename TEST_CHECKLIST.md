@@ -79,9 +79,15 @@
 - 2026-07-10：Wrangler 3.114.17 会提示 compatibility date 回退，已在 `BUGS.md` 记录为低优先级环境问题。
 # Notifications Phase 1
 
-- [ ] 普通 Event 默认生成 `event:60` 和 `event:10`；custom/disabled 配置保存正确。
-- [ ] Event 改期、改提醒、删除后旧 pending reminder 被取消，新计划不与历史 reminder key 冲突。
-- [ ] 全天 Event 在上海时间 09:00 生成一条提醒，非空 custom reminders 返回 400。
-- [ ] DDL 的 high/default/low、due/due_today、complete/reopen/delete 生命周期正确。
-- [ ] 重复系列 PATCH、exception 恢复、split 和 import 不丢失或重复提醒。
-- [ ] `GET /api/notifications` 重复调用不会为同一 reminder 创建重复 notification。
+- [x] 提醒计划、配置校验、派发状态和通知去重的单元测试通过（`npm run test:reminders`）。
+- [x] Deadline priority、due/due_today、complete/reopen 相关单元测试通过（`npm run test:deadlines`）。
+- [x] 重复系列 PATCH 的回归测试通过（`npm run test:series-patch`）。
+- [ ] 真实本地 D1 + Pages Functions 联调：普通 Event、全天 Event、DDL 和通知 API 全链路验证。
+- [ ] 浏览器 Notification 权限、通知列表已读/全部已读和移动端布局人工验收。
+
+## 2026-07-13 验证记录
+
+- `npm run test:deadlines`：通过。
+- `npm run test:reminders`：通过。
+- `npm run test:series-patch`：通过。
+- Node 输出提示 `package.json` 未声明 ESM 类型；不影响当前测试结果，后续可在确认 Wrangler 兼容性后单独处理。

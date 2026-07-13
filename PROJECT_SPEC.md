@@ -42,7 +42,7 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 
 ## 3. 第一阶段范围 (Phase 1)
 
-**本阶段交付：Backend + API + 文档。** 前端日历 UI（Vanilla JS + FullCalendar）放到下一阶段。
+**当前交付：Backend + API + 文档 + Web 前端。** 原计划下一阶段完成的前端日历 UI 已提前实现并接入现有 API；Android / Flutter App 仍属于后续阶段。
 
 必须实现：
 - 登录保护（单一私人密码）
@@ -54,6 +54,14 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 - 基础项目文档
 
 优先级：**稳定 > 简洁 > 易维护 > 可扩展**。不为未来功能过度设计。
+
+### 当前完成度（2026-07-13）
+
+- 后端核心 API：已完成（认证、事件 CRUD、重复系列、分类、导入导出、Deadline、通知）。
+- Web 前端：已完成首版可用界面，支持日历视图、Event / Deadline 创建与编辑、详情、重复事件、通知和提醒配置。
+- MCP：已提供日历、重复系列和 Deadline 操作工具。
+- 自动化验证：Deadline、Reminder、系列 PATCH 回归测试通过；完整浏览器和部署验收仍需执行。
+- 已知问题：软删除事件再次使用相同 `(source, external_id)` 导入仍待处理；本地 Wrangler compatibility date 有版本警告。
 
 ## 4. 数据模型
 

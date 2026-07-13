@@ -509,6 +509,13 @@ button, select, input[type=checkbox]{ user-select:none; }
 .ddl-rail-add:hover{ background:#eef5ff; }
 .ddl-more{ display:block; width:100%; margin-top:6px; border:0; background:transparent; color:var(--muted); font:500 10.5px/1.4 inherit; text-align:left; padding:2px; cursor:pointer; }
 .ddl-more:hover{ text-decoration:underline; color:var(--accent); }
+.ddl-completed{ margin-top:8px; }
+.ddl-completed summary{ list-style:none; display:flex; align-items:center; gap:5px; font-size:10.5px; font-weight:600; color:var(--muted); cursor:pointer; padding:2px; user-select:none; }
+.ddl-completed summary::-webkit-details-marker{ display:none; }
+.ddl-completed summary::before{ content:"\25B8"; font-size:9px; transition:transform .12s ease; }
+.ddl-completed[open] summary::before{ transform:rotate(90deg); }
+.ddl-completed summary:hover{ color:var(--accent); }
+.ddl-completed .ddl-list{ margin-top:6px; }
 .event-relative{ color:var(--accent); font-size:.95em; font-weight:600; }
 .more-link{ border:0; background:transparent; font-family:inherit; text-align:left; }
 .pm-ddl-dot{ outline:1px solid rgba(0,0,0,.08); }

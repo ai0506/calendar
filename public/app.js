@@ -907,6 +907,12 @@ function bindInspectorActions(root) {
   root.querySelectorAll("[data-detail-id]").forEach((item) => {
     item.addEventListener("click", () => openDetail("event", item.dataset.detailId));
   });
+  root.querySelectorAll("[data-open-event]").forEach((item) => {
+    item.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openDetail("event", item.dataset.openEvent);
+    });
+  });
   root.querySelectorAll("[data-category]").forEach((item) => {
     item.addEventListener("click", () => toggleFilter(item.dataset.category));
   });
@@ -1746,11 +1752,14 @@ function deadlineItemHTML(deadline) {
 
 function ddlRailHTML() {
   const quick = quickDeadlines();
-  const visible = quick.slice(0, 3);
-  const more = quick.length - visible.length;
+  const active = quick.filter((deadline) => deadline.status !== "completed");
+  const completed = quick.filter((deadline) => deadline.status === "completed");
+  const visible = active.slice(0, 3);
+  const more = active.length - visible.length;
   return `<div class="ddl-rail"><div class="ddl-rail-head"><span>Due soon</span><span>${sameDay(selectedDate, today()) ? "by priority" : `relative to ${pad2(selectedDate.getMonth() + 1)}.${pad2(selectedDate.getDate())}`}</span></div>
-    <div class="ddl-list">${visible.length ? visible.map(deadlineItemHTML).join("") : '<div class="inspector-empty">Nothing due soon.</div>'}</div>
+    <div class="ddl-list">${visible.length ? visible.map(deadlineItemHTML).join("") : (completed.length ? "" : '<div class="inspector-empty">Nothing due soon.</div>')}</div>
     ${more > 0 ? `<button type="button" class="ddl-more" data-open-quick>+${more} more</button>` : ""}
+    ${completed.length ? `<details class="ddl-completed"><summary>${completed.length} completed</summary><div class="ddl-list">${completed.map(deadlineItemHTML).join("")}</div></details>` : ""}
   </div>`;
 }
 

@@ -445,3 +445,10 @@
 [ClaudeCode][260713155038] Restyle "Mark all read" as a real pill button (tinted border/background/color) instead of a bare text link, per user feedback
 [ClaudeCode][260713160010] Fix detail window resizing while loading (fixed height, was max-height) and title/category-dot misalignment (CSS specificity bug left a 16px bottom margin on the title, throwing off flex vertical centering)
 [ClaudeCode][260713160045] file updated
+[Codex][260713160719] 更新 PROJECT_SPEC、API_DOC、CHANGELOG 和 TEST_CHECKLIST：同步记录 Web 前端、Deadline、通知、MCP 的当前完成度，保留真实未完成的联调验收与已知问题，并补充三组自动化测试通过记录。
+[Codex][260713160732] 更新 BUGS.md 当前状态说明，补充 Web 前端、Deadline、通知已完成，并明确剩余本地联调与生产验收工作。
+[ClaudeCode][260713161310] file updated
+[ClaudeCode][260713161327] file updated
+[ClaudeCode][260713161336] file updated
+[ClaudeCode][260713161500] Fix portrait Timeline tab: event blocks had no click handler (bindInspectorActions was missing a [data-open-event] binding that bindCalendarDeadlineActions already had), so tapping an event there did nothing; now opens the detail window like everywhere else. Also collapse completed deadlines in the "Due soon" rail behind a native <details> "N completed" toggle, collapsed by default, so finished items don't clutter the active list.
+[ClaudeCode][260713161518] file updated

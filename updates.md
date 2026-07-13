@@ -441,3 +441,5 @@
 [ClaudeCode][260713153749] file updated
 [ClaudeCode][260713153757] file updated
 [ClaudeCode][260713153802] Add read-only event/deadline detail window (click event/deadline to view full info; Event: delete; Deadline: complete/reopen + delete); extend GET /api/events/:id with reminders field; repoint deadline click and event blocks to detail modal; update API_DOC
+[ClaudeCode][260713154845] file updated
+[ClaudeCode][260713155038] Restyle "Mark all read" as a real pill button (tinted border/background/color) instead of a bare text link, per user feedback

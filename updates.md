@@ -443,3 +443,5 @@
 [ClaudeCode][260713153802] Add read-only event/deadline detail window (click event/deadline to view full info; Event: delete; Deadline: complete/reopen + delete); extend GET /api/events/:id with reminders field; repoint deadline click and event blocks to detail modal; update API_DOC
 [ClaudeCode][260713154845] file updated
 [ClaudeCode][260713155038] Restyle "Mark all read" as a real pill button (tinted border/background/color) instead of a bare text link, per user feedback
+[ClaudeCode][260713160010] Fix detail window resizing while loading (fixed height, was max-height) and title/category-dot misalignment (CSS specificity bug left a 16px bottom margin on the title, throwing off flex vertical centering)
+[ClaudeCode][260713160045] file updated

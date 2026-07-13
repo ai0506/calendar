@@ -412,3 +412,32 @@
 [Codex][260713141204] 补齐通知前端交互：新增未读徽标、通知列表与已读操作，并在用户点击通知按钮时请求浏览器 Notification 权限，避免登录时自动弹出权限请求。
 [Codex][260713143222] 修复提醒派发临界条件：全天 Event 的 09:00 提醒不再被开始时间误标 skipped；定时 DDL 的 deadline:due 不再因 overdue 状态误取消。新增两项派发状态回归测试。
 [Codex][260713145047] 合并远端 Deadline MCP 工具更新与通知功能：保留 Deadline MCP outputSchema，并将 MCP Deadline 创建、改期、删除、完成和重开接入 reminders 计划生成、取消与重建逻辑。
+[ClaudeCode][260713151159] file updated
+[ClaudeCode][260713151204] file updated
+[ClaudeCode][260713151210] file updated
+[ClaudeCode][260713151225] file updated
+[ClaudeCode][260713151238] file updated
+[ClaudeCode][260713151250] file updated
+[ClaudeCode][260713151255] file updated
+[ClaudeCode][260713151302] file updated
+[ClaudeCode][260713151352] file updated
+[ClaudeCode][260713151639] Fix notifications popup (fixed height, unread dot/tint, Mark all read + POST /api/notifications/read-all endpoint) and stop non-series events showing "Delete Entire Series" (series-delete-actions[hidden] CSS override)
+[ClaudeCode][260713152708] file updated
+[ClaudeCode][260713152924] file updated
+[ClaudeCode][260713153013] file updated
+[ClaudeCode][260713153026] file updated
+[ClaudeCode][260713153033] file updated
+[ClaudeCode][260713153046] file updated
+[ClaudeCode][260713153141] file updated
+[ClaudeCode][260713153156] file updated
+[ClaudeCode][260713153200] file updated
+[ClaudeCode][260713153210] file updated
+[ClaudeCode][260713153218] file updated
+[ClaudeCode][260713153234] file updated
+[ClaudeCode][260713153244] file updated
+[ClaudeCode][260713153251] file updated
+[ClaudeCode][260713153301] file updated
+[ClaudeCode][260713153335] file updated
+[ClaudeCode][260713153749] file updated
+[ClaudeCode][260713153757] file updated
+[ClaudeCode][260713153802] Add read-only event/deadline detail window (click event/deadline to view full info; Event: delete; Deadline: complete/reopen + delete); extend GET /api/events/:id with reminders field; repoint deadline click and event blocks to detail modal; update API_DOC

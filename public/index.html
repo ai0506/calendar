@@ -238,11 +238,22 @@
     </div>
   </div>
 
+  <div class="scrim" id="detailScrim">
+    <div class="modal detail-modal" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+      <div class="detail-head">
+        <span class="detail-cat-dot" id="detailCatDot"></span>
+        <h2 class="detail-title" id="detailTitle">Details</h2>
+      </div>
+      <div class="detail-body" id="detailBody"></div>
+      <div class="modal-actions detail-actions" id="detailActions"></div>
+    </div>
+  </div>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <div class="scrim" id="notificationsScrim">
     <div class="modal notifications-modal" role="dialog" aria-modal="true" aria-label="Notifications">
-      <div class="notifications-head"><h2>Notifications</h2><button type="button" class="btn-cancel" data-action="close-notifications">Close</button></div>
+      <div class="notifications-head"><h2>Notifications</h2><div class="notifications-head-actions"><button type="button" class="notif-read-all" id="notifReadAll">Mark all read</button><button type="button" class="btn-cancel" data-action="close-notifications">Close</button></div></div>
       <div id="notificationsList" class="notifications-list"></div>
     </div>
   </div>

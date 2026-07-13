@@ -38,6 +38,7 @@ let notificationTimer = null;
 let notificationInFlight = false;
 const seenNotificationIds = new Set();
 let notificationItems = [];
+let detailContext = null;
 
 const els = {};
 
@@ -102,7 +103,9 @@ function cacheElements() {
     priSeg: document.getElementById("priSeg"),
     createDdlButton: document.getElementById("createDdlButton"),
     confirmScrim: document.getElementById("confirmScrim"),
+    deleteModalTitle: document.getElementById("deleteModalTitle"),
     confirmTitle: document.getElementById("confirmTitle"),
+    confirmText: document.querySelector("#confirmScrim .confirm-text"),
     confirmDeleteButton: document.getElementById("confirmDeleteButton"),
     seriesDeleteActions: document.getElementById("seriesDeleteActions"),
     deleteThisButton: document.getElementById("deleteThisButton"),
@@ -118,6 +121,12 @@ function cacheElements() {
     notificationBadge: document.getElementById("notificationBadge"),
     notificationsScrim: document.getElementById("notificationsScrim"),
     notificationsList: document.getElementById("notificationsList"),
+    notifReadAll: document.getElementById("notifReadAll"),
+    detailScrim: document.getElementById("detailScrim"),
+    detailCatDot: document.getElementById("detailCatDot"),
+    detailTitle: document.getElementById("detailTitle"),
+    detailBody: document.getElementById("detailBody"),
+    detailActions: document.getElementById("detailActions"),
   });
 }
 
@@ -129,6 +138,7 @@ function bindEvents() {
   document.querySelectorAll("[data-action='close-event']").forEach((button) => button.addEventListener("click", closeModal));
   document.querySelector("[data-action='close-notifications']").addEventListener("click", closeNotifications);
   els.notificationsButton.addEventListener("click", openNotifications);
+  els.notifReadAll.addEventListener("click", markAllNotificationsRead);
   document.querySelector("[data-action='close-confirm']").addEventListener("click", closeConfirm);
   document.querySelector("[data-action='close-complete']").addEventListener("click", closeComplete);
   document.querySelector("[data-action='close-reopen']").addEventListener("click", closeReopen);
@@ -137,6 +147,10 @@ function bindEvents() {
   els.deleteSeriesButton.addEventListener("click", () => confirmDelete("series"));
   els.confirmCompleteButton.addEventListener("click", confirmComplete);
   els.confirmReopenButton.addEventListener("click", confirmReopen);
+  els.detailScrim.addEventListener("click", (event) => {
+    if (event.target === els.detailScrim) closeDetail();
+    if (event.target.closest("[data-action='close-detail']")) closeDetail();
+  });
 
   els.ntEvent.addEventListener("click", () => setNewTab("event"));
   els.ntDdl.addEventListener("click", () => setNewTab("ddl"));
@@ -384,7 +398,28 @@ function closeNotifications() {
   els.notificationsScrim.classList.remove("open");
 }
 
+function syncReadAllButton() {
+  const hasUnread = notificationItems.some((item) => !item.read_at);
+  els.notifReadAll.disabled = !hasUnread;
+}
+
+async function markAllNotificationsRead() {
+  if (!notificationItems.some((item) => !item.read_at)) return;
+  els.notifReadAll.disabled = true;
+  try {
+    await apiFetch("/api/notifications/read-all", { method: "POST" });
+    const readAt = new Date().toISOString();
+    notificationItems = notificationItems.map((item) => item.read_at ? item : { ...item, read_at: readAt });
+    updateNotificationBadge(0);
+    renderNotifications();
+  } catch (err) {
+    showToast("Failed to mark all read.");
+    syncReadAllButton();
+  }
+}
+
 function renderNotifications() {
+  syncReadAllButton();
   if (!notificationItems.length) {
     els.notificationsList.innerHTML = '<div class="notifications-empty">No notifications yet.</div>';
     return;
@@ -768,13 +803,13 @@ function bindCalendarDeadlineActions(root) {
   root.querySelectorAll("[data-open-event]").forEach((item) => {
     item.addEventListener("click", (event) => {
       event.stopPropagation();
-      openEventPopover(item.dataset.openEvent, item.dataset.eventDate, item);
+      openDetail("event", item.dataset.openEvent);
     });
   });
   root.querySelectorAll("[data-deadline-id]").forEach((item) => {
     item.addEventListener("click", (event) => {
       event.stopPropagation();
-      toggleDeadline(item.dataset.deadlineId);
+      openDetail("deadline", item.dataset.deadlineId);
     });
   });
 }
@@ -812,7 +847,7 @@ function openPopover(anchor, html) {
     pop.style.left = `${left}px`;
     pop.style.top = `${top}px`;
     pop.style.visibility = "visible";
-    pop.querySelectorAll("[data-deadline-id]").forEach((item) => item.addEventListener("click", () => toggleDeadline(item.dataset.deadlineId)));
+    pop.querySelectorAll("[data-deadline-id]").forEach((item) => item.addEventListener("click", () => { closePopover(); openDetail("deadline", item.dataset.deadlineId); }));
   });
 }
 
@@ -829,12 +864,6 @@ function dayPopoverHTML(iso) {
 
 function openDayPopover(iso, anchor) {
   openPopover(anchor, dayPopoverHTML(iso));
-}
-
-function openEventPopover(id, iso, anchor) {
-  const event = getEventsFor(parseDateKey(iso)).find((item) => item.id === id);
-  if (!event) return;
-  openPopover(anchor, `<h4>${eventTitleHTML(event)}</h4><div class="pop-row"><span class="pop-dot" style="background:${event.color}"></span><span class="pt">${escapeHtml(event.cat)}</span></div><div class="pop-row"><span class="pt">${isAllDayEvent(event) ? "All-day" : `${event.start} - ${event.end}`}</span></div>`);
 }
 
 function openQuickPopover(anchor) {
@@ -875,11 +904,14 @@ function bindInspectorActions(root) {
       requestDeleteEvent(button.dataset.deleteId, button.dataset.deleteTitle, button.dataset.seriesId);
     });
   });
+  root.querySelectorAll("[data-detail-id]").forEach((item) => {
+    item.addEventListener("click", () => openDetail("event", item.dataset.detailId));
+  });
   root.querySelectorAll("[data-category]").forEach((item) => {
     item.addEventListener("click", () => toggleFilter(item.dataset.category));
   });
   root.querySelectorAll("[data-deadline-id]").forEach((item) => {
-    item.addEventListener("click", () => toggleDeadline(item.dataset.deadlineId));
+    item.addEventListener("click", () => openDetail("deadline", item.dataset.deadlineId));
   });
   root.querySelectorAll("[data-open-deadline]").forEach((button) => {
     button.addEventListener("click", () => openDeadlineModal());
@@ -1011,7 +1043,7 @@ function bindTimelineDeletes() {
 }
 
 function agendaItemHTML(event, date) {
-  return `<div class="agenda-item">
+  return `<div class="agenda-item" data-detail-id="${escapeAttr(event.id)}">
     <div class="agenda-bar" style="background:${event.color}"></div>
     <div class="agenda-body">
       <div class="agenda-title">${eventTitleHTML(event)}</div>
@@ -1247,13 +1279,24 @@ async function submitEvent(event) {
 }
 
 function requestDeleteEvent(id, title, seriesId = "") {
-  pendingDelete = { id, seriesId: seriesId || null };
+  pendingDelete = { id, seriesId: seriesId || null, kind: "event" };
+  els.deleteModalTitle.textContent = "Delete Event";
   els.confirmTitle.textContent = title || "this event";
   els.confirmDeleteButton.disabled = false;
   els.seriesDeleteActions.hidden = !pendingDelete.seriesId;
   els.confirmDeleteButton.hidden = Boolean(pendingDelete.seriesId);
   els.deleteThisButton.disabled = false;
   els.deleteSeriesButton.disabled = false;
+  els.confirmScrim.classList.add("open");
+}
+
+function requestDeleteDeadline(id, title) {
+  pendingDelete = { id, seriesId: null, kind: "deadline" };
+  els.deleteModalTitle.textContent = "Delete Deadline";
+  els.confirmTitle.textContent = title || "this deadline";
+  els.confirmDeleteButton.disabled = false;
+  els.seriesDeleteActions.hidden = true;
+  els.confirmDeleteButton.hidden = false;
   els.confirmScrim.classList.add("open");
 }
 
@@ -1264,6 +1307,20 @@ function closeConfirm() {
 
 async function confirmDelete(scope = "event") {
   if (!pendingDelete) return;
+  if (pendingDelete.kind === "deadline") {
+    els.confirmDeleteButton.disabled = true;
+    try {
+      await apiFetch(`/api/deadlines/${encodeURIComponent(pendingDelete.id)}`, { method: "DELETE" });
+      closeConfirm();
+      showToast("Deadline deleted");
+      await refreshVisibleData({ silent: false, force: true });
+    } catch (err) {
+      showToast(err.message || "Failed to delete deadline.");
+    } finally {
+      els.confirmDeleteButton.disabled = false;
+    }
+    return;
+  }
   const button = scope === "series" ? els.deleteSeriesButton : scope === "event" && pendingDelete.seriesId ? els.deleteThisButton : els.confirmDeleteButton;
   button.disabled = true;
   try {
@@ -1279,6 +1336,105 @@ async function confirmDelete(scope = "event") {
   } finally {
     button.disabled = false;
   }
+}
+
+// ---- Read-only detail window (Event / Deadline) ----
+
+const REMINDER_LABELS = { 10: "10 min before", 15: "15 min before", 30: "30 min before", 60: "1 hour before", 120: "2 hours before", 1440: "1 day before" };
+
+function reminderLabel(minutes) {
+  return REMINDER_LABELS[minutes] || `${minutes} min before`;
+}
+
+function detailRow(label, valueHtml, valueClass = "") {
+  return `<div class="detail-row"><div class="detail-label">${label}</div><div class="detail-value ${valueClass}">${valueHtml}</div></div>`;
+}
+
+async function openDetail(kind, id) {
+  closePopover();
+  detailContext = { kind, id };
+  els.detailCatDot.style.background = "var(--muted)";
+  els.detailTitle.textContent = kind === "deadline" ? "Deadline" : "Event";
+  els.detailBody.innerHTML = '<div class="detail-skeleton">Loading…</div>';
+  els.detailActions.innerHTML = `<button type="button" class="btn-cancel" data-action="close-detail">Close</button>`;
+  els.detailScrim.classList.add("open");
+  try {
+    const path = kind === "deadline" ? `/api/deadlines/${encodeURIComponent(id)}` : `/api/events/${encodeURIComponent(id)}`;
+    const response = await apiFetch(path);
+    if (!detailContext || detailContext.id !== id) return; // superseded by another open/close
+    const data = response.data || {};
+    if (kind === "deadline") renderDeadlineDetail(data);
+    else renderEventDetail(data);
+  } catch (err) {
+    if (!detailContext || detailContext.id !== id) return;
+    els.detailBody.innerHTML = '<div class="detail-skeleton">Failed to load details.</div>';
+  }
+}
+
+function closeDetail() {
+  els.detailScrim.classList.remove("open");
+  detailContext = null;
+}
+
+function renderEventDetail(row) {
+  const event = adaptEvent(row);
+  if (!event) { els.detailBody.innerHTML = '<div class="detail-skeleton">Event not found.</div>'; return; }
+  const dateText = parseDateKey(event.dateKey).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const timeText = isAllDayEvent(event) ? "All-day" : `${event.start} – ${event.end}`;
+  const reminders = Array.isArray(row.reminders) ? row.reminders : [];
+  els.detailCatDot.style.background = event.color;
+  els.detailTitle.textContent = event.title;
+  const rows = [
+    detailRow("Category", `<span class="detail-cat-dot" style="background:${event.color};display:inline-block;vertical-align:middle;margin-right:6px"></span>${escapeHtml(event.cat)}`),
+    detailRow("Date", escapeHtml(dateText)),
+    detailRow("Time", escapeHtml(timeText)),
+  ];
+  if (event.seriesId) rows.push(detailRow("Repeats", "Part of a repeating series"));
+  if (!isAllDayEvent(event)) {
+    rows.push(detailRow("Reminders", reminders.length ? reminders.map(reminderLabel).map(escapeHtml).join("<br>") : "No reminders", reminders.length ? "" : "muted"));
+  }
+  rows.push(detailRow("Notes", event.description ? `<span class="detail-desc">${escapeHtml(event.description)}</span>` : "None", event.description ? "" : "muted"));
+  els.detailBody.innerHTML = rows.join("");
+  els.detailActions.innerHTML = `
+    <button type="button" class="btn-delete detail-actions-left" id="detailDeleteBtn">Delete</button>
+    <button type="button" class="btn-cancel" data-action="close-detail">Close</button>`;
+  document.getElementById("detailDeleteBtn").addEventListener("click", () => {
+    closeDetail();
+    requestDeleteEvent(event.id, event.title, event.seriesId || "");
+  });
+}
+
+function renderDeadlineDetail(row) {
+  const deadline = adaptDeadline(row);
+  if (!deadline) { els.detailBody.innerHTML = '<div class="detail-skeleton">Deadline not found.</div>'; return; }
+  const dueDateText = parseDateKey(deadline.dateKey).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const dueText = deadline.allDay ? `${dueDateText} · End of day` : `${dueDateText} · ${deadline.time}`;
+  const statusClass = deadline.status === "completed" ? "completed" : deadline.status === "overdue" ? "overdue" : "open";
+  const statusText = deadline.status === "completed" ? "Completed" : deadline.status === "overdue" ? "Overdue" : "Open";
+  const description = row.description || "";
+  els.detailCatDot.style.background = deadline.color;
+  els.detailTitle.textContent = deadline.title;
+  const rows = [
+    detailRow("Category", `<span class="detail-cat-dot" style="background:${deadline.color};display:inline-block;vertical-align:middle;margin-right:6px"></span>${escapeHtml(deadline.cat)}`),
+    detailRow("Priority", `<span class="pri-tag pri-${deadline.priority}" style="--ddl-color:${deadline.color}">${escapeHtml(deadline.priority)}</span>`),
+    detailRow("Due", escapeHtml(dueText)),
+    detailRow("Status", `<span class="detail-status ${statusClass}">${statusText}</span>`),
+    detailRow("Notes", description ? `<span class="detail-desc">${escapeHtml(description)}</span>` : "None", description ? "" : "muted"),
+  ];
+  els.detailBody.innerHTML = rows.join("");
+  const toggleLabel = deadline.status === "completed" ? "Reopen" : "Complete";
+  els.detailActions.innerHTML = `
+    <button type="button" class="btn-delete detail-actions-left" id="detailDeleteBtn">Delete</button>
+    <button type="button" class="btn-cancel" data-action="close-detail">Close</button>
+    <button type="button" class="btn-create" id="detailToggleBtn">${toggleLabel}</button>`;
+  document.getElementById("detailDeleteBtn").addEventListener("click", () => {
+    closeDetail();
+    requestDeleteDeadline(deadline.id, deadline.title);
+  });
+  document.getElementById("detailToggleBtn").addEventListener("click", () => {
+    closeDetail();
+    openDeadlineActionConfirm(deadline.id);
+  });
 }
 
 function toggleAllDayFields() {
@@ -1483,7 +1639,7 @@ function findDeadline(id) {
   return null;
 }
 
-function toggleDeadline(id) {
+function openDeadlineActionConfirm(id) {
   closePopover();
   const deadline = findDeadline(id);
   if (!deadline) return;

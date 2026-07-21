@@ -17,6 +17,7 @@
 // 复用 _lib/ 的 db / events / auth / oauth 逻辑，不修改现有 REST API。
 
 import { queryAll, queryOne, run, batch } from "../_lib/db.js";
+import { attachTagsToDeadlines, attachTagsToEvents, ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../_lib/tags.js";
 import { safeEqual } from "../_lib/auth.js";
 import {
   verifyAccessToken,
@@ -92,7 +93,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version",
 };
 
-// 可被 update_event 更新的字段（与 PUT /api/events/:id 保持一致；id/created_at 不可改）
+// 可被 calendar_update_event 更新的字段（与 PUT /api/events/:id 保持一致；id/created_at 不可改）
 const UPDATABLE = [
   "title",
   "description",
@@ -125,6 +126,7 @@ const EVENT_WRITE_PROPERTIES = {
       "不确定用什么颜色时优先用 \"default\"，会自动采用 category 的颜色。",
   },
   group_title: { type: "string", description: "分组标题（可选）" },
+  tag_ids: { type: "array", items: { type: "string" }, maxItems: 5, description: "可选，全局标签 ID；传空数组清空标签。" },
   reminders: {
     type: "array", items: { type: "integer", enum: [10, 15, 30, 60, 120, 1440] }, maxItems: 2,
     description: "可选，开始前提醒分钟数；最多两个。空数组关闭提醒。",
@@ -142,6 +144,7 @@ const DEADLINE_WRITE_PROPERTIES = {
   priority: { type: "string", enum: ["high", "default", "low"], description: "重要程度，默认 default" },
   source: { type: "string", description: "来源（创建时可选）" },
   external_id: { type: "string", description: "外部唯一标识（创建时可选）" },
+  tag_ids: { type: "array", items: { type: "string" }, maxItems: 5, description: "可选，全局标签 ID；传空数组清空标签。" },
 };
 
 const DEADLINE_OUTPUT_PROPERTIES = {
@@ -177,7 +180,7 @@ const DEADLINE_LIST_OUTPUT_SCHEMA = {
 
 const TOOLS = [
   {
-    name: "list_events",
+    name: "calendar_list_events",
     description:
       "【只读｜用户主日历】列出日历事件（排除已删除）。未提供 from/to 时默认返回当前上海时间起未来 30 天；" +
       "如需历史或更远日期，请显式提供 from/to。可按 ISO 8601 时间范围和分类名 category 过滤，按开始时间升序返回。",
@@ -194,51 +197,59 @@ const TOOLS = [
           description: "结束时间，ISO 8601 带时区偏移；例如 2026-08-13T23:59:59+08:00。过滤 start_time <= to。",
         },
         category: { type: "string", description: "按分类名精确过滤，如 Physics。" },
+        tag_ids: { type: "array", items: { type: "string" }, maxItems: 5, description: "可选；同时拥有全部指定标签的 Event（AND）。" },
       },
       additionalProperties: false,
     },
   },
   {
-    name: "list_categories",
+    name: "calendar_list_categories",
     description: "【只读】列出全部分类，按 sort_order、name 升序返回。",
     annotations: { readOnlyHint: true },
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
-    name: "list_deadlines",
+    name: "calendar_list_tags",
+    description: "【只读】列出全部全局标签，按 sort_order、name 升序返回；创建或更新事项时使用返回的 id。",
+    annotations: { readOnlyHint: true },
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "calendar_list_deadlines",
     description: "【只读】列出单次截止事项。未指定日期时返回当前上海时间起未来 30 天；可按分类和完成状态过滤。",
     annotations: { readOnlyHint: true },
     inputSchema: { type: "object", properties: {
       from: { type: "string", description: "起始日期 YYYY-MM-DD（可选）" },
       to: { type: "string", description: "结束日期 YYYY-MM-DD（可选）" },
       category: { type: "string", description: "分类名（可选）" },
+      tag_ids: { type: "array", items: { type: "string" }, maxItems: 5, description: "可选；同时拥有全部指定标签的 Deadline（AND）。" },
       include_completed: { type: "boolean", description: "是否包含已完成项，默认 true" },
     }, additionalProperties: false },
     outputSchema: DEADLINE_LIST_OUTPUT_SCHEMA,
   },
   {
-    name: "create_deadline",
+    name: "calendar_create_deadline",
     description: "【需写权限】创建单次截止事项。priority 仅支持 high/default/low；暂不支持重复截止事项。",
     annotations: { readOnlyHint: false },
     inputSchema: { type: "object", properties: DEADLINE_WRITE_PROPERTIES, required: ["title", "due_time"], additionalProperties: false },
     outputSchema: DEADLINE_OUTPUT_SCHEMA,
   },
   {
-    name: "get_deadline",
+    name: "calendar_get_deadline",
     description: "【只读】按 id 读取单个活动截止事项。",
     annotations: { readOnlyHint: true },
     inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" } }, required: ["id"], additionalProperties: false },
     outputSchema: DEADLINE_OUTPUT_SCHEMA,
   },
   {
-    name: "update_deadline",
+    name: "calendar_update_deadline",
     description: "【需写权限】修改截止事项；source 和 external_id 创建后不可修改，只传需要修改的字段。",
     annotations: { readOnlyHint: false },
     inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" }, ...DEADLINE_WRITE_PROPERTIES }, required: ["id"], additionalProperties: false },
     outputSchema: DEADLINE_OUTPUT_SCHEMA,
   },
   {
-    name: "delete_deadline",
+    name: "calendar_delete_deadline",
     description: "【需写权限】软删除一个截止事项。",
     annotations: { readOnlyHint: false, destructiveHint: true },
     inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" } }, required: ["id"], additionalProperties: false },
@@ -250,21 +261,21 @@ const TOOLS = [
     },
   },
   {
-    name: "complete_deadline",
+    name: "calendar_complete_deadline",
     description: "【需写权限】将截止事项标记为已完成；重复调用幂等。",
     annotations: { readOnlyHint: false },
     inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" } }, required: ["id"], additionalProperties: false },
     outputSchema: DEADLINE_OUTPUT_SCHEMA,
   },
   {
-    name: "reopen_deadline",
+    name: "calendar_reopen_deadline",
     description: "【需写权限】重新打开已完成的截止事项；重复调用幂等。",
     annotations: { readOnlyHint: false },
     inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" } }, required: ["id"], additionalProperties: false },
     outputSchema: DEADLINE_OUTPUT_SCHEMA,
   },
   {
-    name: "create_event",
+    name: "calendar_create_event",
     description:
       "【需写权限】创建一个事件。id / created_at / updated_at 由服务器生成。" +
       "时间原样保留提交的时区偏移，服务器不做 UTC 转换。",
@@ -277,7 +288,7 @@ const TOOLS = [
     },
   },
   {
-    name: "update_event",
+    name: "calendar_update_event",
     description:
       "【需写权限】更新指定 id 的事件（仅更新提供的字段）。若改了 category 且未显式指定 color，" +
       "会自动继承该分类颜色。updated_at 由服务器刷新。",
@@ -290,7 +301,7 @@ const TOOLS = [
     },
   },
   {
-    name: "delete_event",
+    name: "calendar_delete_event",
     description: "【需写权限】软删除指定 id 的事件（设置 deleted_at，不物理删除）。",
     annotations: { readOnlyHint: false, destructiveHint: true },
     inputSchema: {
@@ -301,7 +312,7 @@ const TOOLS = [
     },
   },
   {
-    name: "create_event_series",
+    name: "calendar_create_event_series",
     description:
       "【需写权限】创建一个重复事件系列，并生成全部实例。用于“每天/每周/每月/每年重复”的日程。" +
       "必须提供 end_date 或 occurrence_count 之一来界定范围（最多 366 个实例）。" +
@@ -326,8 +337,8 @@ const TOOLS = [
     },
   },
   {
-    name: "get_event_series",
-    description: "【只读｜用户主日历】获取指定 series_id 的重复系列：规则、当前未删除实例、以及已登记的跳过项(exceptions)。请使用 create_event_series 或 split_series 返回的精确 ID。",
+    name: "calendar_get_event_series",
+    description: "【只读｜用户主日历】获取指定 series_id 的重复系列：规则、当前未删除实例、以及已登记的跳过项(exceptions)。请使用 calendar_create_event_series 或 calendar_split_series 返回的精确 ID。",
     annotations: { readOnlyHint: true },
     inputSchema: {
       type: "object",
@@ -340,12 +351,12 @@ const TOOLS = [
     },
   },
   {
-    name: "update_event_series",
+    name: "calendar_update_event_series",
     description:
       "【需写权限｜用户主日历】修改整个重复系列的规则（仅传要改的字段），会按新规则**重新生成全部实例**。" +
       "⚠️ 影响面大：之前对单个实例的单独修改会丢失。" +
-      "👉 优先考虑更精细的做法：只想改“从某天起”的规则 → 用 split_series 先切成两段再改新段；" +
-      "只想去掉/挪动某一次 → 用 skip_occurrence。仅当要整体改动整个系列时才用本工具。",
+      "👉 优先考虑更精细的做法：只想改“从某天起”的规则 → 用 calendar_split_series 先切成两段再改新段；" +
+      "只想去掉/挪动某一次 → 用 calendar_skip_occurrence。仅当要整体改动整个系列时才用本工具。",
     annotations: { readOnlyHint: false },
     inputSchema: {
       type: "object",
@@ -368,11 +379,11 @@ const TOOLS = [
     },
   },
   {
-    name: "delete_event_series",
+    name: "calendar_delete_event_series",
     description:
       "【需写权限｜用户主日历】软删除**整个**重复系列及其全部未删除实例。" +
-      "必须使用 create_event_series 或 split_series 返回的精确 series_id；不要根据标题猜 ID。" +
-      "👉 若只想去掉其中一次，别用这个——改用 skip_occurrence（保留系列，只跳过那一次）。",
+      "必须使用 calendar_create_event_series 或 calendar_split_series 返回的精确 series_id；不要根据标题猜 ID。" +
+      "👉 若只想去掉其中一次，别用这个——改用 calendar_skip_occurrence（保留系列，只跳过那一次）。",
     annotations: { readOnlyHint: false, destructiveHint: true },
     inputSchema: {
       type: "object",
@@ -385,10 +396,10 @@ const TOOLS = [
     },
   },
   {
-    name: "skip_occurrence",
+    name: "calendar_skip_occurrence",
     description:
       "【需写权限｜推荐】跳过重复系列中的**某一次**（不影响其余）。用于“这周二那次取消/请假”。" +
-      "只登记跳过，不创建替代事件；如需改期，跳过后再用 create_event 单独建一个普通事件。",
+      "只登记跳过，不创建替代事件；如需改期，跳过后再用 calendar_create_event 单独建一个普通事件。",
     annotations: { readOnlyHint: false },
     inputSchema: {
       type: "object",
@@ -404,8 +415,8 @@ const TOOLS = [
     },
   },
   {
-    name: "restore_occurrence",
-    description: "【需写权限】撤销之前的跳过，恢复重复系列中某一次的实例。与 skip_occurrence 相反。",
+    name: "calendar_restore_occurrence",
+    description: "【需写权限】撤销之前的跳过，恢复重复系列中某一次的实例。与 calendar_skip_occurrence 相反。",
     annotations: { readOnlyHint: false },
     inputSchema: {
       type: "object",
@@ -418,11 +429,11 @@ const TOOLS = [
     },
   },
   {
-    name: "split_series",
+    name: "calendar_split_series",
     description:
       "【需写权限｜推荐】把一个重复系列从 split_date 起切成前后两段（split_date 归入新段）。" +
       "用于“从某天起改变重复规则/时间/分类”而**不影响之前的历史**：切分后对返回的 new_series_id " +
-      "调用 update_event_series 修改新段即可。仅支持带 end_date 且无 occurrence_count 的系列。",
+      "调用 calendar_update_event_series 修改新段即可。仅支持带 end_date 且无 occurrence_count 的系列。",
     annotations: { readOnlyHint: false },
     inputSchema: {
       type: "object",
@@ -440,9 +451,10 @@ const TOOLS = [
 
 // 复用与 GET /api/events 相同的查询逻辑（直接查 D1，不经过 HTTP）。
 async function runListEvents(env, args = {}) {
-  const { from, to, category } = args;
+  const { from, to, category, tag_ids: tagIds } = args;
   if (from !== undefined && !isValidIso(from)) throw new Error("from 必须是 ISO 8601（带时区偏移）");
   if (to !== undefined && !isValidIso(to)) throw new Error("to 必须是 ISO 8601（带时区偏移）");
+  if (tagIds !== undefined) { const tagMessage = validateTagIds(tagIds); if (tagMessage) throw new Error(tagMessage); }
 
   let effectiveFrom = from;
   let effectiveTo = to;
@@ -457,10 +469,16 @@ async function runListEvents(env, args = {}) {
   if (effectiveFrom) { sql += " AND start_time >= ?"; params.push(effectiveFrom); }
   if (effectiveTo) { sql += " AND start_time <= ?"; params.push(effectiveTo); }
   if (category) { sql += " AND category = ?"; params.push(category); }
+  if (tagIds?.length) {
+    const placeholders = tagIds.map(() => "?").join(", ");
+    sql += ` AND ((series_id IS NULL AND id IN (SELECT event_id FROM event_tags WHERE tag_id IN (${placeholders}) GROUP BY event_id HAVING COUNT(DISTINCT tag_id) = ?)) OR (series_id IS NOT NULL AND series_id IN (SELECT series_id FROM event_series_tags WHERE tag_id IN (${placeholders}) GROUP BY series_id HAVING COUNT(DISTINCT tag_id) = ?)))`;
+    params.push(...tagIds, tagIds.length, ...tagIds, tagIds.length);
+  }
+  const whereSql = sql.replace(/^SELECT \* FROM events WHERE /, "");
   sql += " ORDER BY start_time ASC";
 
   const rows = await queryAll(env.DB, sql, params);
-  return rows.map(rowToEvent);
+  return (await attachTagsToEvents(env, rows, whereSql, params)).map(rowToEvent);
 }
 
 // 复用与 GET /api/categories 相同的查询逻辑。
@@ -477,6 +495,7 @@ async function runListDeadlines(env, args = {}) {
   if (from === undefined || to === undefined) throw new Error("from/to must be valid YYYY-MM-DD dates");
   if (from && to && to < from) throw new Error("to must not be before from");
   if (args.category !== undefined && (typeof args.category !== "string" || args.category.trim() === "")) throw new Error("category must be a non-empty string");
+  if (args.tag_ids !== undefined) { const tagMessage = validateTagIds(args.tag_ids); if (tagMessage) throw new Error(tagMessage); }
   const includeCompleted = args.include_completed === undefined ? true : parseBooleanParam(args.include_completed, true);
   if (includeCompleted === null) throw new Error("include_completed must be true or false");
   if (!from && !to) { from = shanghaiDateKey(); to = shanghaiDateKey(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)); }
@@ -485,25 +504,34 @@ async function runListDeadlines(env, args = {}) {
   if (to) { sql += " AND substr(due_time, 1, 10) <= ?"; params.push(to); }
   if (!includeCompleted) sql += " AND completed_at IS NULL";
   if (args.category) { sql += " AND category = ?"; params.push(args.category); }
+  if (args.tag_ids?.length) { const placeholders = args.tag_ids.map(() => "?").join(", "); sql += ` AND id IN (SELECT deadline_id FROM deadline_tags WHERE tag_id IN (${placeholders}) GROUP BY deadline_id HAVING COUNT(DISTINCT tag_id) = ?)`; params.push(...args.tag_ids, args.tag_ids.length); }
+  const whereSql = sql.replace(/^SELECT \* FROM deadlines WHERE /, "");
   sql += " ORDER BY substr(due_time, 1, 10) ASC, CASE WHEN all_day = 1 THEN 0 ELSE 1 END ASC, CASE WHEN all_day = 1 THEN 0 ELSE julianday(due_time) END ASC, id ASC";
-  return (await queryAll(env.DB, sql, params)).map(rowToDeadline);
+  return (await attachTagsToDeadlines(env, await queryAll(env.DB, sql, params), whereSql, params)).map(rowToDeadline);
 }
 
 async function runCreateDeadline(env, args = {}) {
   const message = validateDeadlineInput(args, true); if (message) throw new Error(message);
+  if (args.tag_ids !== undefined) { const tagMessage = validateTagIds(args.tag_ids); if (tagMessage) throw new Error(tagMessage); const exists = await ensureTagIdsExist(env, args.tag_ids); if (exists) throw new Error(exists); }
   const input = normalizeDeadlineInput(args); const now = nowIso();
   const deadline = { id: crypto.randomUUID(), title: input.title.trim(), description: input.description ?? null, due_time: input.due_time, all_day: input.all_day === 1 ? 1 : 0, category: input.category ?? null, color: input.color ?? null, group_title: input.group_title ?? null, priority: input.priority || "default", source: input.source || "mcp", external_id: input.external_id ?? null, created_at: now, updated_at: now, completed_at: null, deleted_at: null };
-  await batch(env.DB, [
+  const statements = [
     env.DB.prepare("INSERT INTO deadlines (id, title, description, due_time, all_day, category, color, group_title, priority, source, external_id, created_at, updated_at, completed_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(...Object.values(deadline)),
     ...deadlineReminderStatements(env.DB, deadline),
-  ]);
-  return rowToDeadline(deadline);
+  ];
+  if (args.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "deadline_tags", "deadline_id", deadline.id, args.tag_ids, now));
+  await batch(env.DB, statements);
+  return { ...rowToDeadline(deadline), tags: [] };
+}
+
+async function runListTags(env) {
+  return queryAll(env.DB, "SELECT * FROM tags ORDER BY sort_order ASC, name ASC");
 }
 
 async function runGetDeadline(env, args = {}) {
   if (typeof args.id !== "string" || args.id.trim() === "") throw new Error("id is required");
-  const row = await activeDeadline(env, args.id); if (!row) throw new Error("Deadline not found"); return rowToDeadline(row);
+  const row = await activeDeadline(env, args.id); if (!row) throw new Error("Deadline not found"); return { ...rowToDeadline(row), tags: await tagsForOwner(env, "deadline_tags", "deadline_id", row.id) };
 }
 
 async function runUpdateDeadline(env, args = {}) {
@@ -511,6 +539,7 @@ async function runUpdateDeadline(env, args = {}) {
   const existing = await activeDeadline(env, args.id); if (!existing) throw new Error("Deadline not found");
   if (args.source !== undefined || args.external_id !== undefined) throw new Error("source and external_id cannot be modified");
   const body = { ...args }; delete body.id;
+  if (body.tag_ids !== undefined) { const tagMessage = validateTagIds(body.tag_ids); if (tagMessage) throw new Error(tagMessage); const exists = await ensureTagIdsExist(env, body.tag_ids); if (exists) throw new Error(exists); }
   const message = validateDeadlineInput({ ...existing, ...body }, true); if (message) throw new Error(message);
   const input = normalizeDeadlineInput(body); const sets = []; const values = [];
   for (const field of deadlineFields()) { if (field === "source" || field === "external_id" || input[field] === undefined) continue; sets.push(`${field} = ?`); values.push(field === "all_day" ? input[field] : field === "title" ? input[field].trim() : input[field]); }
@@ -531,8 +560,10 @@ async function runUpdateDeadline(env, args = {}) {
     statements.push(cancelTargetStatement(env.DB, "deadline", args.id, now));
     statements.push(...deadlineReminderStatements(env.DB, updatedDeadline));
   }
+  if (body.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "deadline_tags", "deadline_id", args.id, body.tag_ids, now));
   await batch(env.DB, statements);
-  return rowToDeadline(await activeDeadline(env, args.id));
+  const updated = await activeDeadline(env, args.id);
+  return { ...rowToDeadline(updated), tags: await tagsForOwner(env, "deadline_tags", "deadline_id", args.id) };
 }
 
 async function runDeleteDeadline(env, args = {}) {
@@ -592,6 +623,7 @@ async function runCreateEvent(env, args = {}) {
   if (temporalMsg) throw new Error(temporalMsg);
   const reminderRequest = requestedReminders(args, toIntBool(args.all_day) === 1);
   if (reminderRequest.error) throw new Error(reminderRequest.error);
+  if (args.tag_ids !== undefined) { const tagMessage = validateTagIds(args.tag_ids); if (tagMessage) throw new Error(tagMessage); const exists = await ensureTagIdsExist(env, args.tag_ids); if (exists) throw new Error(exists); }
 
   const now = nowIso();
   const event = {
@@ -625,10 +657,11 @@ async function runCreateEvent(env, args = {}) {
     statements.push(env.DB.prepare(`INSERT INTO event_reminder_configs (event_id, mode, reminders_json, updated_at)
       VALUES (?, ?, ?, ?)`).bind(event.id, reminders.length ? "custom" : "disabled", reminders.length ? JSON.stringify(reminders) : null, now));
   }
+  if (args.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "event_tags", "event_id", event.id, args.tag_ids, now));
   statements.push(...eventReminderStatements(env.DB, event, reminders));
   await batch(env.DB, statements);
 
-  return { ...rowToEvent(event), reminders };
+  return { ...rowToEvent(event), reminders, tags: [] };
 }
 
 // 对应 PUT /api/events/:id
@@ -645,6 +678,8 @@ async function runUpdateEvent(env, args = {}) {
   if (existing.series_id && Object.prototype.hasOwnProperty.call(body, "reminders")) {
     throw new Error("reminders for a recurring occurrence must be changed through the event series");
   }
+  if (existing.series_id && Object.prototype.hasOwnProperty.call(body, "tag_ids")) throw new Error("tags for a recurring occurrence must be changed through the event series");
+  if (body.tag_ids !== undefined) { const tagMessage = validateTagIds(body.tag_ids); if (tagMessage) throw new Error(tagMessage); const exists = await ensureTagIdsExist(env, body.tag_ids); if (exists) throw new Error(exists); }
 
   const msg = validateEventInput(body, false);
   if (msg) throw new Error(msg);
@@ -695,9 +730,10 @@ async function runUpdateEvent(env, args = {}) {
     }
     statements.push(...eventReminderStatements(env.DB, { ...existing, ...body, id, all_day: mergedAllDay }, reminders));
   }
+  if (body.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "event_tags", "event_id", id, body.tag_ids, now));
   await batch(env.DB, statements);
 
-  return { ...rowToEvent(await getActiveEvent(env, id)), ...(reminders ? { reminders } : {}) };
+  return { ...rowToEvent(await getActiveEvent(env, id)), ...(reminders ? { reminders } : {}), tags: await tagsForOwner(env, "event_tags", "event_id", id) };
 }
 
 // 对应 DELETE /api/events/:id （软删除）
@@ -765,6 +801,7 @@ function buildRecurrenceBody(args) {
 // 对应 POST /api/event-series
 async function runCreateEventSeries(env, args = {}) {
   const body = buildRecurrenceBody(args);
+  if (args.tag_ids !== undefined) { const tagMessage = validateTagIds(args.tag_ids); if (tagMessage) throw new Error(tagMessage); const exists = await ensureTagIdsExist(env, args.tag_ids); if (exists) throw new Error(exists); }
   body.color = (await resolveDefaultColor(env, body.category, body.color)) ?? null;
   const eventMessage = validateEventInput(body, true);
   if (eventMessage) throw new Error(eventMessage);
@@ -782,6 +819,7 @@ async function runCreateEventSeries(env, args = {}) {
   const now = nowIso();
   const series = seriesFromRequest({ ...body, all_day: toIntBool(body.all_day) }, seriesId, body.idempotency_key, now);
   const statements = [insertSeriesStatement(env.DB, series)];
+  if (args.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "event_series_tags", "series_id", seriesId, args.tag_ids, now));
   instances.forEach((instance, index) => statements.push(insertInstanceStatement(env.DB, series, instance, index)));
   await batch(env.DB, statements);
   return { series_id: seriesId, created_count: instances.length };
@@ -802,7 +840,8 @@ async function runGetEventSeries(env, args = {}) {
     "SELECT * FROM event_exceptions WHERE series_id = ? ORDER BY original_start_time ASC",
     [id],
   );
-  return { series: rowToSeries(series), events: events.map(rowToEvent), exceptions };
+  const tags = await tagsForOwner(env, "event_series_tags", "series_id", id);
+  return { series: { ...rowToSeries(series), tags }, events: events.map((event) => ({ ...rowToEvent(event), tags })), exceptions };
 }
 
 // 对应 PATCH /api/event-series/:id（MCP 版：每次调用为独立操作，不走 event_operations 幂等表）
@@ -816,6 +855,7 @@ async function runUpdateEventSeries(env, args = {}) {
   const id = seriesIdFromArgs(args);
   const series = await getActiveSeries(env, id);
   if (!series) throw new Error("Event series not found");
+  if (args.tag_ids !== undefined) { const tagMessage = validateTagIds(args.tag_ids); if (tagMessage) throw new Error(tagMessage); const exists = await ensureTagIdsExist(env, args.tag_ids); if (exists) throw new Error(exists); }
 
   const merged = mergeSeriesPatch(series, args, SERIES_PATCH_FIELDS);
   if (args.start_time !== undefined && args.start_date === undefined) {
@@ -873,6 +913,7 @@ async function runUpdateEventSeries(env, args = {}) {
     ),
     env.DB.prepare("UPDATE events SET deleted_at=?, updated_at=? WHERE series_id=? AND deleted_at IS NULL").bind(now, now, id),
   ];
+  if (args.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "event_series_tags", "series_id", id, args.tag_ids, now));
   invalidExceptions.forEach((e) => {
     statements.push(env.DB.prepare("DELETE FROM event_exceptions WHERE id=? AND series_id=?").bind(e.id, id));
   });
@@ -1070,6 +1111,8 @@ async function runSplitSeries(env, args = {}) {
     env.DB.prepare("UPDATE events SET deleted_at = ?, updated_at = ? WHERE series_id = ? AND substr(original_start_time, 1, 10) >= ? AND deleted_at IS NULL").bind(now, now, seriesId, splitDate),
     env.DB.prepare("UPDATE event_exceptions SET series_id = ?, updated_at = ? WHERE series_id = ? AND substr(original_start_time, 1, 10) >= ?").bind(newSeriesId, now, seriesId, splitDate),
     insertSeriesStatement(env.DB, newSeries),
+    env.DB.prepare(`INSERT INTO event_series_tags (series_id, tag_id, created_at)
+      SELECT ?, tag_id, ? FROM event_series_tags WHERE series_id = ?`).bind(newSeriesId, now, seriesId),
   ];
   newInstances.forEach((instance, index) => {
     if (!migratedExceptions.has(instance.start_time)) {
@@ -1131,27 +1174,36 @@ function unauthorized(request) {
 
 // --- 工具分发 -------------------------------------------------------------
 
+// 工具名统一加了 calendar_ 前缀（与 Cloudflare 等其他 MCP server 的工具区分）。
+// 已连接的旧客户端可能仍在用不带前缀的旧名，这里透明映射；tools/list 只暴露新名。
+const LEGACY_TOOL_NAMES = new Set(TOOLS.map((tool) => tool.name.slice("calendar_".length)));
+
+function resolveToolName(name) {
+  return LEGACY_TOOL_NAMES.has(name) ? `calendar_${name}` : name;
+}
+
 async function callTool(env, name, args) {
-  switch (name) {
-    case "list_events": return runListEvents(env, args);
-    case "list_categories": return runListCategories(env);
-    case "list_deadlines": return runListDeadlines(env, args);
-    case "create_deadline": return runCreateDeadline(env, args);
-    case "get_deadline": return runGetDeadline(env, args);
-    case "update_deadline": return runUpdateDeadline(env, args);
-    case "delete_deadline": return runDeleteDeadline(env, args);
-    case "complete_deadline": return runSetDeadlineCompletion(env, args, true);
-    case "reopen_deadline": return runSetDeadlineCompletion(env, args, false);
-    case "create_event": return runCreateEvent(env, args);
-    case "update_event": return runUpdateEvent(env, args);
-    case "delete_event": return runDeleteEvent(env, args);
-    case "create_event_series": return runCreateEventSeries(env, args);
-    case "get_event_series": return runGetEventSeries(env, args);
-    case "update_event_series": return runUpdateEventSeries(env, args);
-    case "delete_event_series": return runDeleteEventSeries(env, args);
-    case "skip_occurrence": return runSkipOccurrence(env, args);
-    case "restore_occurrence": return runRestoreOccurrence(env, args);
-    case "split_series": return runSplitSeries(env, args);
+  switch (resolveToolName(name)) {
+    case "calendar_list_events": return runListEvents(env, args);
+    case "calendar_list_categories": return runListCategories(env);
+    case "calendar_list_tags": return runListTags(env);
+    case "calendar_list_deadlines": return runListDeadlines(env, args);
+    case "calendar_create_deadline": return runCreateDeadline(env, args);
+    case "calendar_get_deadline": return runGetDeadline(env, args);
+    case "calendar_update_deadline": return runUpdateDeadline(env, args);
+    case "calendar_delete_deadline": return runDeleteDeadline(env, args);
+    case "calendar_complete_deadline": return runSetDeadlineCompletion(env, args, true);
+    case "calendar_reopen_deadline": return runSetDeadlineCompletion(env, args, false);
+    case "calendar_create_event": return runCreateEvent(env, args);
+    case "calendar_update_event": return runUpdateEvent(env, args);
+    case "calendar_delete_event": return runDeleteEvent(env, args);
+    case "calendar_create_event_series": return runCreateEventSeries(env, args);
+    case "calendar_get_event_series": return runGetEventSeries(env, args);
+    case "calendar_update_event_series": return runUpdateEventSeries(env, args);
+    case "calendar_delete_event_series": return runDeleteEventSeries(env, args);
+    case "calendar_skip_occurrence": return runSkipOccurrence(env, args);
+    case "calendar_restore_occurrence": return runRestoreOccurrence(env, args);
+    case "calendar_split_series": return runSplitSeries(env, args);
     default: throw new Error(`未知工具：${name}`);
   }
 }
@@ -1183,9 +1235,9 @@ async function handleMessage(request, env, msg) {
           serverInfo: { name: "ai0506-calendar", version: "0.1.0" },
           instructions:
             "这是用户的主日历，也是默认应使用的个人日历。除非用户明确指定其他日历，否则读取和写入都使用这里。" +
-            "调用工具前先读取 tools/list，不要猜工具名或参数名。list_events 未指定 from/to 时只返回当前上海时间起未来 30 天；" +
-            "需要历史或更远日期时必须显式提供时间范围。系列工具统一优先使用 series_id，并始终沿用 create_event_series 或 split_series 返回的精确 ID。" +
-            "删除系列前先确认目标 series_id；只取消一次时使用 skip_occurrence，不要删除整个系列。",
+            "调用工具前先读取 tools/list，不要猜工具名或参数名。calendar_list_events 未指定 from/to 时只返回当前上海时间起未来 30 天；" +
+            "需要历史或更远日期时必须显式提供时间范围。系列工具统一优先使用 series_id，并始终沿用 calendar_create_event_series 或 calendar_split_series 返回的精确 ID。" +
+            "删除系列前先确认目标 series_id；只取消一次时使用 calendar_skip_occurrence，不要删除整个系列。",
         });
       }
 
@@ -1205,7 +1257,7 @@ async function handleMessage(request, env, msg) {
         try {
           const data = await callTool(env, name, args);
           const toolResult = { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-          if (TOOLS.find((tool) => tool.name === name)?.outputSchema) toolResult.structuredContent = data;
+          if (TOOLS.find((tool) => tool.name === resolveToolName(name))?.outputSchema) toolResult.structuredContent = data;
           return rpcResult(id, toolResult);
         } catch (toolErr) {
           return toolError(id, `工具执行失败：${toolErr.message}`);

@@ -67,6 +67,16 @@
 - [x] `GET /api/export?format=md` → `text/markdown`，格式可读
 - [x] 导出不包含软删除事件
 
+## Tags
+
+- [x] Local D1 migration `0010_tags.sql` applies successfully.
+- [x] Tag validation rejects duplicate IDs and more than five item tags (`npm run test:tags`).
+- [x] Web smoke test creates an Event with a selected tag and records no browser console errors.
+- [x] Event/Deadline list and export tag reads use range-derived subqueries instead of dynamic ID `IN (...)` bindings, keeping D1 bound parameters below 100.
+- [x] Android tag create/edit and recurring-series edit paths compile (`:app:compileDebugKotlin`).
+- [x] Production D1 migration `0010_tags.sql` has been applied and the Tag-capable Pages build deployed.
+- [ ] Authenticated production Tag create/edit/filter smoke test.
+
 ## 安全 / 卫生
 - [x] `.env` / `.dev.vars` 已被 `.gitignore` 忽略，未提交
 - [x] 响应错误信息不泄露敏感信息
@@ -80,10 +90,13 @@
 # Notifications Phase 1
 
 - [x] 提醒计划、配置校验、派发状态和通知去重的单元测试通过（`npm run test:reminders`）。
+- [x] 过期提醒回归：过去的全天 Event、到期后的 Deadline 提前提醒和超过 24 小时的最终 due 提醒均标为 skipped；宽限期内使用 overdue 文案。
+- [x] Web 模拟 API 浏览器回归：首次轮询不重弹历史未读，打开通知中心不自动申请权限，新通知正常提示，点击后标已读并定位详情。
+- [x] Web 通知中心 390×844 竖屏回归：权限说明、未读状态、类型标签和提醒计划时间完整显示，弹窗不超出视口。
 - [x] Deadline priority、due/due_today、complete/reopen 相关单元测试通过（`npm run test:deadlines`）。
 - [x] 重复系列 PATCH 的回归测试通过（`npm run test:series-patch`）。
 - [ ] 真实本地 D1 + Pages Functions 联调：普通 Event、全天 Event、DDL 和通知 API 全链路验证。
-- [ ] 浏览器 Notification 权限、通知列表已读/全部已读和移动端布局人工验收。
+- [ ] 真实浏览器 Notification 授权后的系统弹窗、通知列表全部已读和生产数据人工验收。
 
 ## 2026-07-13 验证记录
 
@@ -91,3 +104,24 @@
 - `npm run test:reminders`：通过。
 - `npm run test:series-patch`：通过。
 - Node 输出提示 `package.json` 未声明 ESM 类型；不影响当前测试结果，后续可在确认 Wrangler 兼容性后单独处理。
+
+## Android 原生客户端（Kotlin + Jetpack Compose）
+
+- [x] `:app:testDebugUnitTest`：CalendarTime 覆盖全天/定时 Event、上海 `+08:00`、非法和倒置时间、Deadline 时间校验。
+- [x] `:app:assembleDebug`：Debug APK 构建成功。
+- [x] `:app:lintDebug`：Android 静态检查通过。
+- [x] `:app:bundleRelease`：Release 变体能够完成 bundle 编译。
+- [ ] 使用私有 release keystore 构建并验证可用于商店上传的已签名 AAB。
+- [x] 本地 Pages + D1 冒烟联调：Cookie 登录、Event 创建/列表 reminders/完整编辑/软删除、Deadline 创建/编辑/完成/重开/软删除、重复系列创建/PATCH/删除全部通过。
+- [x] Android Debug 包连接本地 Pages + D1 的真实登录与核心交互验收：API 35 模拟器完成安装启动、Cookie 登录、月历加载、Event/Deadline 创建、Deadline 完成与重开，以及强制结束进程后的会话恢复。
+- [ ] 真机 Android 安装与登录验收。
+- [x] Android 13+ 通知授权、定时提醒、修改后去重和设备重启恢复验收：API 35 模拟器中，真实 Event 闹钟按时显示在系统通知栏；修改 Event 的时间后旧闹钟被替换且新闹钟保留；模拟器重启后系统 BOOT_COMPLETED 广播从私有缓存重新登记待触发闹钟。
+- [x] 跨设备提醒收敛验收：API 35 模拟器先登记未来 Event 闹钟，再通过本地 Pages+D1 模拟网页端软删除并重启 Android 应用；应用重新读取服务端月份后，该时间点不再出现在 AlarmManager 待触发列表，确认不会保留远端已删除的提醒。
+- [x] API 35 Pixel Tablet 模拟器（2560×1600）布局验收：月/周/日可切换，宽屏右侧详情栏稳定显示，New Event/Deadline 弹窗字段与底部操作按钮完整可见。
+- [x] 短屏横向模拟器回归：紧凑顶栏、固定高度分类占位、月格日期/圆点锚定布局均已验证，月格数字和圆点完整可见。
+- [x] 按真实设备比例复验：手机竖屏 1260×2880 隐藏品牌、月历优先获得上半屏高度，日期/圆点完整可见；平板横向 2800×1840 保留完整品牌栏和宽屏详情分栏（API 35 模拟器、本地 Pages+D1 已登录数据）。
+- [x] Android Tag 元数据非阻塞加载回归：Event/Deadline/Category 请求完成后月历可先渲染，Tag 与分类推荐延迟返回不阻塞主数据；切换到预取月份不会用空 Tag 缓存覆盖已加载数据。
+- [x] Android Tag 选择器双尺寸回归：1260×2880 手机和 2800×1840@480dpi 平板默认显示 6 项（三列两行），Show more 展开全部 10 项，Event/Deadline 的 Cancel/Create 操作栏始终可见。
+- [x] Android 顶栏与图标回归：1260×2880 手机的 Today/通知/New 保持单行且间距清楚；2800×1840@480dpi 平板的 Today 导航组与 Month/Week/Day 操作组明确分隔；网页 favicon 生成的自适应图标在模拟器圆形启动器遮罩下无裁切。
+- [ ] 手机和大屏设备的月/周/日布局、创建/编辑表单、通知跳转人工验收。
+- [ ] 生产 Cloudflare API 与正式数据库联调验收。

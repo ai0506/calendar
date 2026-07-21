@@ -20,7 +20,7 @@ Phase 1 核心功能已完成：认证、events CRUD、categories、import、exp
 - 备注 / 修复：不改变 API contract，不改变生产认证签名逻辑。
 
 ### [BUG-0002] soft delete 后相同 `(source, external_id)` 再导入会失败
-- 状态：Open
+  - 状态：Fixed
 - 严重程度：Medium
 - 发现日期：2026-07-10
 - 影响：Import API / 数据恢复或重复导入
@@ -39,10 +39,20 @@ Phase 1 核心功能已完成：认证、events CRUD、categories、import、exp
 - 影响：本地开发 / 部署一致性
 - 复现步骤：
   1. 运行 `npm run dev`
-  2. Wrangler 3.114.17 提示不支持 `compatibility_date = "2026-01-01"`，本地回退到 `2025-07-18`
+    2. （修复前）Wrangler 3.114.17 提示不支持 `compatibility_date = "2026-01-01"`，本地回退到 `2025-07-18`
 - 期望行为：本地运行时支持当前 compatibility date。
-- 实际行为：本地可运行，但有版本回退警告。
-- 备注 / 修复：建议后续升级 Wrangler 4；本次按要求不引入新依赖，未修改 `package.json`。
+  - 实际行为：升级前本地可运行，但有版本回退警告。
+  - 备注 / 修复：2026-07-13 已升级项目开发依赖至 Wrangler 4.110.0；`npx wrangler --version` 与本地 D1 migration 均通过，不再出现 compatibility date 回退警告。
+
+### [BUG-0004] Web 通知重复弹出并补发陈旧提醒
+- 状态：Fixed
+- 严重程度：High
+- 发现日期：2026-07-19
+- 影响：Web 前端 / Notification API / Reminder 派发
+- 复现步骤：保留未读通知后刷新页面，或关闭网页直到 Event/Deadline 提醒过期后再重新打开。
+- 期望行为：历史未读只更新角标；只提示本次会话新到达的通知；过期提醒不集中补发；点击通知打开目标详情。
+- 实际行为：修复前会重弹历史未读，过期全天 Event 可能仍显示 today，Deadline 多阶段提醒可能集中出现，点击只标记已读。
+- 备注 / 修复：首次轮询建立历史基线；加入 Event/Deadline 过期规则和 due 24 小时宽限；权限改为显式开启；通知点击会标已读并定位目标。
 
 ## 模板
 

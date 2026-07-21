@@ -5,6 +5,13 @@
 
 ## [Unreleased]
 
+### Added
+- Tags for Events, Deadlines, and recurring Event Series, including category-based suggestions, Web/Android selection UI, import/export, and MCP query/write support.
+- Web notification center upgrade: historical unread items no longer replay on login, browser-alert permission is explicit, notification rows open their Event/Deadline, scheduled reminder time is shown, and stale reminder backlogs are suppressed.
+
+### Changed
+- MCP 工具名统一加 `calendar_` 前缀（如 `calendar_list_events`），避免与同时挂载的其他 MCP server（Cloudflare 等）工具混淆。旧的无前缀工具名仍被服务端接受并透明映射，`tools/list` 只暴露新名。
+
 ### 计划中
 - Android / Flutter App
 - 完整浏览器端到端测试与生产部署验收

@@ -121,10 +121,10 @@ npx @modelcontextprotocol/inspector
 
 ## 7. Deadline 工具
 
-- `list_deadlines`：按 `from` / `to`（`YYYY-MM-DD`）、分类和完成状态查询；不传日期默认返回未来 30 天。
-- `create_deadline`：创建单次 DDL，必须提供 `title`、`due_time`；`priority` 为 `high`、`default` 或 `low`。
-- `get_deadline`、`update_deadline`、`delete_deadline`：读取、修改和软删除 DDL。
-- `complete_deadline` / `reopen_deadline`：完成或重新打开 DDL，重复调用幂等。
+- `calendar_list_deadlines`：按 `from` / `to`（`YYYY-MM-DD`）、分类和完成状态查询；不传日期默认返回未来 30 天。
+- `calendar_create_deadline`：创建单次 DDL，必须提供 `title`、`due_time`；`priority` 为 `high`、`default` 或 `low`。
+- `calendar_get_deadline`、`calendar_update_deadline`、`calendar_delete_deadline`：读取、修改和软删除 DDL。
+- `calendar_complete_deadline` / `calendar_reopen_deadline`：完成或重新打开 DDL，重复调用幂等。
 
 DDL 使用独立的 `due_time`、`priority` 和完成状态，不要当作普通 event 创建。
 
@@ -145,10 +145,15 @@ DDL 使用独立的 `due_time`、`priority` 和完成状态，不要当作普通
 
 这个 MCP 对应用户的**主日历**。除非用户明确指定其他日历，否则 AI 应将这里作为默认日历，直接读取和写入。
 
+### 工具命名
+
+所有工具名都带 `calendar_` 前缀（如 `calendar_list_events`），用于和同时挂载的其他 MCP server（Cloudflare 等）区分。
+不带前缀的旧工具名仍被服务端接受并透明映射到新名，但 `tools/list` 只返回新名，新接入请一律使用带前缀的名字。
+
 ### 查询事件
 
 - 调用工具前先读取 `tools/list`，不要猜工具名或参数名。
-- `list_events` 不传 `from` / `to` 时，默认只返回当前 `Asia/Shanghai` 时间起未来 30 天的事件。
+- `calendar_list_events` 不传 `from` / `to` 时，默认只返回当前 `Asia/Shanghai` 时间起未来 30 天的事件。
 - 查询历史或 30 天以外的事件时，必须显式传入 `from` / `to`，格式为带时区的 ISO 8601，例如 `2026-07-14T00:00:00+08:00`。
 - 只传 `from` 或只传 `to` 时，另一侧不自动补范围，适合查询“某日期之后”或“某日期之前”。
 
@@ -161,15 +166,15 @@ DDL 使用独立的 `due_time`、`priority` 和完成状态，不要当作普通
 
 ### 重复系列
 
-- `create_event_series` 必须指定 `end_date` 或 `occurrence_count`，不能创建无限重复系列。
+- `calendar_create_event_series` 必须指定 `end_date` 或 `occurrence_count`，不能创建无限重复系列。
 - `weekly` 必须提供 `weekdays`：周日为 `0`，周一为 `1`，一直到周六 `6`。
-- `split_series`、`skip_occurrence`、`restore_occurrence` 使用 `series_id`。
-- `get_event_series`、`update_event_series`、`delete_event_series` 也优先使用 `series_id`；旧版 `id` 仍兼容，但不要两个字段同时传。
-- 始终使用 `create_event_series` 或 `split_series` 返回的精确 ID，不要根据标题、事件 ID 或日期猜系列 ID。
+- `calendar_split_series`、`calendar_skip_occurrence`、`calendar_restore_occurrence` 使用 `series_id`。
+- `calendar_get_event_series`、`calendar_update_event_series`、`calendar_delete_event_series` 也优先使用 `series_id`；旧版 `id` 仍兼容，但不要两个字段同时传。
+- 始终使用 `calendar_create_event_series` 或 `calendar_split_series` 返回的精确 ID，不要根据标题、事件 ID 或日期猜系列 ID。
 
 ### 删除和修改
 
-- 只取消重复系列中的一次，使用 `skip_occurrence`；不要删除整个系列。
-- 需要从某天起改变规则时，先 `split_series`，再对返回的 `new_series_id` 使用 `update_event_series`。
-- `update_event_series` 会重新生成整个系列实例，可能覆盖之前对单个实例做过的修改；只有确认影响范围后才使用。
-- `delete_event_series` 是破坏性操作。调用前应确认目标 `series_id`，并在结果异常时先用 `get_event_series` 或 `list_events` 核对，不要立即重复删除。
+- 只取消重复系列中的一次，使用 `calendar_skip_occurrence`；不要删除整个系列。
+- 需要从某天起改变规则时，先 `calendar_split_series`，再对返回的 `new_series_id` 使用 `calendar_update_event_series`。
+- `calendar_update_event_series` 会重新生成整个系列实例，可能覆盖之前对单个实例做过的修改；只有确认影响范围后才使用。
+- `calendar_delete_event_series` 是破坏性操作。调用前应确认目标 `series_id`，并在结果异常时先用 `calendar_get_event_series` 或 `calendar_list_events` 核对，不要立即重复删除。

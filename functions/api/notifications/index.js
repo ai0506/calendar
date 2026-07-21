@@ -13,8 +13,10 @@ export async function onRequestGet(context) {
   const now = new Date();
   await dispatchDueReminders(env, now);
   await cleanupNotifications(env, now);
-  const where = includeRead ? "" : "WHERE read_at IS NULL";
-  const items = await queryAll(env.DB, `SELECT * FROM notifications ${where} ORDER BY created_at DESC LIMIT ?`, [parsedLimit]);
+  const where = includeRead ? "" : "WHERE n.read_at IS NULL";
+  const items = await queryAll(env.DB, `SELECT n.*, r.scheduled_at AS scheduled_at
+    FROM notifications n LEFT JOIN reminders r ON r.id = n.reminder_id
+    ${where} ORDER BY n.created_at DESC LIMIT ?`, [parsedLimit]);
   const unread = await queryOne(env.DB, "SELECT COUNT(*) AS count FROM notifications WHERE read_at IS NULL");
   return ok({ items, unread_count: Number(unread?.count || 0) });
 }

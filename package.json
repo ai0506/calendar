@@ -2,18 +2,20 @@
   "name": "ai0506-calendar",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "AI0506 Calendar — 私人日历系统 (Cloudflare Pages + Functions + D1)",
   "scripts": {
     "dev": "wrangler pages dev",
     "test:deadlines": "node tests/deadlines.test.mjs",
     "test:reminders": "node tests/reminders.test.mjs",
     "test:series-patch": "node tests/series-patch.test.mjs",
+    "test:tags": "node tests/tags.test.mjs",
     "db:local": "wrangler d1 migrations apply calendar-db --local",
     "db:remote": "wrangler d1 migrations apply calendar-db --remote",
     "db:create": "wrangler d1 create calendar-db",
     "deploy": "wrangler pages deploy"
   },
   "devDependencies": {
-    "wrangler": "^3"
+    "wrangler": "^4.110.0"
   }
 }

@@ -62,7 +62,9 @@ function getCookie(request, name) {
 
 function isLocalhostRequest(request) {
   const hostname = new URL(request.url).hostname;
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+  // 10.0.2.2 is the Android Emulator's loopback route to the host machine.
+  // Treat it as local so HTTP-only development does not receive a Secure cookie.
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "10.0.2.2";
 }
 
 /** 生成 Set-Cookie 头字符串（登录成功时使用） */

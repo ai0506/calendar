@@ -16,6 +16,7 @@ import {
   eventReminderStatements,
   requestedReminders,
 } from "../../_lib/reminders.js";
+import { ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../../_lib/tags.js";
 
 async function getActiveSeries(env, id) {
   return queryOne(
@@ -40,7 +41,8 @@ export async function onRequestGet(context) {
     "SELECT * FROM event_exceptions WHERE series_id = ? ORDER BY original_start_time ASC",
     [params.id],
   );
-  return ok({ series: rowToSeries(series), events: events.map(rowToEvent), exceptions });
+  const tags = await tagsForOwner(env, "event_series_tags", "series_id", params.id);
+  return ok({ series: { ...rowToSeries(series), tags }, events: events.map((event) => ({ ...rowToEvent(event), tags })), exceptions });
 }
 
 const SERIES_PATCH_FIELDS = [
@@ -95,6 +97,12 @@ export async function onRequestPatch(context) {
   if (recurrenceMessage) return error("validation_error", recurrenceMessage, 400);
   const reminderRequest = requestedReminders(body, merged.all_day === true || merged.all_day === 1);
   if (reminderRequest.error) return error("validation_error", reminderRequest.error, 400);
+  const tagMessage = body.tag_ids === undefined ? null : validateTagIds(body.tag_ids);
+  if (tagMessage) return error("validation_error", tagMessage, 400);
+  if (body.tag_ids !== undefined) {
+    const tagExistsMessage = await ensureTagIdsExist(env, body.tag_ids);
+    if (tagExistsMessage) return error("validation_error", tagExistsMessage, 400);
+  }
 
   let instances;
   try {
@@ -142,6 +150,7 @@ export async function onRequestPatch(context) {
   if (reminderRequest.provided) {
     statements.push(configStatement(env.DB, "event_series_reminder_configs", "series_id", params.id, reminders, now));
   }
+  if (body.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "event_series_tags", "series_id", params.id, body.tag_ids, now));
   invalidExceptions.forEach((exception) => {
     statements.push(env.DB.prepare("DELETE FROM event_exceptions WHERE id = ? AND series_id = ?")
       .bind(exception.id, params.id));

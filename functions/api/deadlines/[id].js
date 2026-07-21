@@ -14,11 +14,12 @@ import {
 } from "../../_lib/deadlines.js";
 import { nowIso } from "../../_lib/events.js";
 import { cancelTargetStatement, deadlineReminderStatements } from "../../_lib/reminders.js";
+import { ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../../_lib/tags.js";
 
 export async function onRequestGet(context) {
   const row = await activeDeadline(context.env, context.params.id);
   if (!row) return error("not_found", "Deadline not found", 404);
-  return ok(rowToDeadline(row));
+  return ok({ ...rowToDeadline(row), tags: await tagsForOwner(context.env, "deadline_tags", "deadline_id", row.id) });
 }
 
 export async function onRequestPut(context) {
@@ -32,6 +33,12 @@ export async function onRequestPut(context) {
   }
   if (body.source !== undefined || body.external_id !== undefined) {
     return error("validation_error", "source and external_id cannot be modified", 400);
+  }
+  const tagMessage = body.tag_ids === undefined ? null : validateTagIds(body.tag_ids);
+  if (tagMessage) return error("validation_error", tagMessage, 400);
+  if (body.tag_ids !== undefined) {
+    const tagExistsMessage = await ensureTagIdsExist(env, body.tag_ids);
+    if (tagExistsMessage) return error("validation_error", tagExistsMessage, 400);
   }
 
   const merged = { ...existing, ...body };
@@ -55,10 +62,11 @@ export async function onRequestPut(context) {
     statements.push(cancelTargetStatement(env.DB, "deadline", params.id, values[values.length - 2]));
     statements.push(...deadlineReminderStatements(env.DB, updatedForPlan));
   }
+  if (body.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "deadline_tags", "deadline_id", params.id, body.tag_ids, values[values.length - 2]));
   await batch(env.DB, statements);
   const updated = await activeDeadline(env, params.id);
   if (!updated) return error("not_found", "Deadline not found", 404);
-  return ok(rowToDeadline(updated));
+  return ok({ ...rowToDeadline(updated), tags: await tagsForOwner(env, "deadline_tags", "deadline_id", updated.id) });
 }
 
 export async function onRequestDelete(context) {

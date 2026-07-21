@@ -11,7 +11,8 @@ import {
   nowIso,
   toIntBool,
 } from "../../_lib/events.js";
-import { configStatement, eventReminderStatements, requestedReminders } from "../../_lib/reminders.js";
+import { configStatement, effectiveEventReminders, eventReminderStatements, requestedReminders } from "../../_lib/reminders.js";
+import { attachTagsToEvents, ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../../_lib/tags.js";
 
 // GET /api/events?from=&to=&category=
 export async function onRequestGet(context) {
@@ -20,6 +21,8 @@ export async function onRequestGet(context) {
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");
   const category = url.searchParams.get("category");
+  const tagIds = url.searchParams.getAll("tag").filter(Boolean);
+  if (new Set(tagIds).size !== tagIds.length) return error("validation_error", "tag query parameters must not contain duplicates", 400);
 
   let sql = "SELECT * FROM events WHERE deleted_at IS NULL";
   const params = [];
@@ -37,10 +40,23 @@ export async function onRequestGet(context) {
     sql += " AND category = ?";
     params.push(category);
   }
+  if (tagIds.length) {
+    const placeholders = tagIds.map(() => "?").join(", ");
+    sql += ` AND ((series_id IS NULL AND id IN (SELECT event_id FROM event_tags WHERE tag_id IN (${placeholders}) GROUP BY event_id HAVING COUNT(DISTINCT tag_id) = ?)) OR (series_id IS NOT NULL AND series_id IN (SELECT series_id FROM event_series_tags WHERE tag_id IN (${placeholders}) GROUP BY series_id HAVING COUNT(DISTINCT tag_id) = ?)))`;
+    params.push(...tagIds, tagIds.length, ...tagIds, tagIds.length);
+  }
+  const whereSql = sql.replace(/^SELECT \* FROM events WHERE /, "");
   sql += " ORDER BY start_time ASC";
 
   const rows = await queryAll(env.DB, sql, params);
-  return ok(rows.map(rowToEvent));
+  const taggedRows = await attachTagsToEvents(env, rows, whereSql, params);
+  // The Android client uses the effective configuration to restore local alarms.
+  // It is additive for existing web consumers and preserves a disabled [] value.
+  const events = await Promise.all(taggedRows.map(async (row) => ({
+    ...rowToEvent(row),
+    reminders: await effectiveEventReminders(env, row.id, row.series_id || null),
+  })));
+  return ok(events);
 }
 
 // POST /api/events
@@ -58,6 +74,12 @@ export async function onRequestPost(context) {
   if (temporalMsg) return error("validation_error", temporalMsg, 400);
   const reminderRequest = requestedReminders(body, toIntBool(body.all_day) === 1);
   if (reminderRequest.error) return error("validation_error", reminderRequest.error, 400);
+  const tagMessage = body.tag_ids === undefined ? null : validateTagIds(body.tag_ids);
+  if (tagMessage) return error("validation_error", tagMessage, 400);
+  if (body.tag_ids !== undefined) {
+    const tagExistsMessage = await ensureTagIdsExist(env, body.tag_ids);
+    if (tagExistsMessage) return error("validation_error", tagExistsMessage, 400);
+  }
 
   const id = crypto.randomUUID();
   const now = nowIso();
@@ -103,8 +125,9 @@ export async function onRequestPost(context) {
   if (reminderRequest.provided) {
     statements.push(configStatement(env.DB, "event_reminder_configs", "event_id", id, reminders, now));
   }
+  if (body.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "event_tags", "event_id", id, body.tag_ids, now));
   statements.push(...eventReminderStatements(env.DB, event, reminders));
   await batch(env.DB, statements);
 
-  return ok({ ...rowToEvent(event), reminders }, 201);
+  return ok({ ...rowToEvent(event), reminders, tags: await tagsForOwner(env, "event_tags", "event_id", id) }, 201);
 }

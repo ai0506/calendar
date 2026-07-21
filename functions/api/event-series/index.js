@@ -10,6 +10,7 @@ import {
 } from "../../_lib/recurrence.js";
 import { insertInstanceStatement, insertSeriesStatement, seriesFromRequest } from "../../_lib/series.js";
 import { configStatement, eventReminderStatements, requestedReminders } from "../../_lib/reminders.js";
+import { ensureTagIdsExist, replaceTagStatements, validateTagIds } from "../../_lib/tags.js";
 
 function eventCount(env, seriesId) {
   return queryOne(
@@ -43,6 +44,12 @@ export async function onRequestPost(context) {
   if (recurrenceMessage) return error("validation_error", recurrenceMessage, 400);
   const reminderRequest = requestedReminders(body, toIntBool(body.all_day) === 1);
   if (reminderRequest.error) return error("validation_error", reminderRequest.error, 400);
+  const tagMessage = body.tag_ids === undefined ? null : validateTagIds(body.tag_ids);
+  if (tagMessage) return error("validation_error", tagMessage, 400);
+  if (body.tag_ids !== undefined) {
+    const tagExistsMessage = await ensureTagIdsExist(env, body.tag_ids);
+    if (tagExistsMessage) return error("validation_error", tagExistsMessage, 400);
+  }
 
   const existing = await queryOne(
     env.DB,
@@ -70,6 +77,7 @@ export async function onRequestPost(context) {
   if (reminderRequest.provided) {
     statements.push(configStatement(env.DB, "event_series_reminder_configs", "series_id", seriesId, reminders, now));
   }
+  if (body.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "event_series_tags", "series_id", seriesId, body.tag_ids, now));
 
   instances.forEach((instance, index) => {
     const eventId = crypto.randomUUID();

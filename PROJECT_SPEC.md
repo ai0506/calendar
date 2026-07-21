@@ -118,7 +118,9 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 
 `event_reminder_configs` / `event_series_reminder_configs` 保存 Event 的 custom 或 disabled 配置；无配置行表示默认提前 60 分钟和 10 分钟。`reminders` 保存每个 Event occurrence 或 Deadline 的实际计划，历史 cancelled/sent/skipped 行保留，只有 pending `(target_type, target_id, reminder_key)` 唯一。`notifications` 保存已经派发的站内通知，并以 `reminder_id` 去重。
 
-Event 支持最多两个预设提醒；全天 Event 固定在上海时间当天 09:00 提醒。Deadline 根据 priority 自动生成提醒，完成/删除/改期会取消或重建尚未派发的计划。浏览器页面打开时由前端轮询触发派发；不承诺页面关闭后仍能推送。
+Event 支持最多两个预设提醒；全天 Event 固定在上海时间当天 09:00 提醒。Deadline 根据 priority 自动生成提醒，完成/删除/改期会取消或重建尚未派发的计划。过期 Event 与过期的 Deadline 提前提醒不会补发；最终 due 提醒只保留 24 小时宽限，避免页面重新打开时通知集中轰炸。
+
+浏览器页面打开时由前端轮询触发派发；首次轮询只把历史未读作为角标基线，不重新弹出。通知中心点击后会标记已读并打开对应 Event/Deadline。浏览器系统提示为独立、显式开启的可选渠道，仅在页面打开时工作；本阶段不承诺页面关闭后仍能推送。
 
 ### 未来表（本阶段不创建）
 - `day_marks`（Days Matter 倒计时）

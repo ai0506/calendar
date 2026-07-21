@@ -2,10 +2,15 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>AI0506 Calendar</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/styles.css?v=20260719-180947" />
 </head>
 <body>
   <div class="topbar" id="topbar" aria-hidden="true">
@@ -56,6 +61,7 @@
 
   <div class="scrim" id="eventScrim">
     <div class="modal event-modal" role="dialog" aria-modal="true" aria-label="Create calendar item">
+      <div class="sheet-grab" aria-hidden="true"></div>
       <div class="new-seg" role="tablist" aria-label="New item type">
         <button type="button" id="ntEvent" class="active" role="tab" aria-selected="true">Event</button>
         <button type="button" id="ntDdl" role="tab" aria-selected="false">Deadline</button>
@@ -69,6 +75,10 @@
           <div class="field">
             <label>Category</label>
             <div class="cat-swatches" id="catSwatches"></div>
+          </div>
+          <div class="field tag-field">
+            <label>Tags <span class="field-hint">optional, up to 5</span></label>
+            <div class="tag-picker" id="fTagPicker" aria-label="Event tags"></div>
           </div>
           <div class="row2">
             <div class="field">
@@ -171,6 +181,10 @@
             <label>Category</label>
             <div class="cat-swatches" id="dCatSwatches"></div>
           </div>
+          <div class="field tag-field">
+            <label>Tags <span class="field-hint">optional, up to 5</span></label>
+            <div class="tag-picker" id="dTagPicker" aria-label="Deadline tags"></div>
+          </div>
           <div class="field">
             <label>Priority</label>
             <div class="pri-seg" id="priSeg" role="group" aria-label="Deadline priority">
@@ -204,6 +218,7 @@
 
   <div class="scrim" id="confirmScrim">
     <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+      <div class="sheet-grab" aria-hidden="true"></div>
       <h2 id="deleteModalTitle">Delete Event</h2>
       <p class="confirm-text">Are you sure you want to delete <b id="confirmTitle"></b>? This can't be undone.</p>
       <div class="series-delete-actions" id="seriesDeleteActions" hidden>
@@ -219,6 +234,7 @@
 
   <div class="scrim" id="completeScrim">
     <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="completeModalTitle">
+      <div class="sheet-grab" aria-hidden="true"></div>
       <h2 id="completeModalTitle">Complete deadline</h2>
       <p class="confirm-text">Mark <b id="completeTitle"></b> as completed?</p>
       <div class="modal-actions">
@@ -230,6 +246,7 @@
 
   <div class="scrim" id="reopenScrim">
     <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="reopenModalTitle">
+      <div class="sheet-grab" aria-hidden="true"></div>
       <h2 id="reopenModalTitle">Reopen deadline</h2>
       <p class="confirm-text">Reopen <b id="reopenTitle"></b> and mark it as not completed?</p>
       <div class="modal-actions">
@@ -241,6 +258,7 @@
 
   <div class="scrim" id="detailScrim">
     <div class="modal detail-modal" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+      <div class="sheet-grab" aria-hidden="true"></div>
       <div class="detail-head">
         <span class="detail-cat-dot" id="detailCatDot"></span>
         <h2 class="detail-title" id="detailTitle">Details</h2>
@@ -254,11 +272,16 @@
 
   <div class="scrim" id="notificationsScrim">
     <div class="modal notifications-modal" role="dialog" aria-modal="true" aria-label="Notifications">
+      <div class="sheet-grab" aria-hidden="true"></div>
       <div class="notifications-head"><h2>Notifications</h2><div class="notifications-head-actions"><button type="button" class="notif-read-all" id="notifReadAll">Mark all read</button><button type="button" class="btn-cancel" data-action="close-notifications">Close</button></div></div>
+      <div class="notification-delivery" id="notificationDelivery">
+        <div><strong>Browser alerts</strong><span id="notificationDeliveryText"></span></div>
+        <button type="button" class="notification-permission" id="notificationPermissionButton">Enable</button>
+      </div>
       <div id="notificationsList" class="notifications-list"></div>
     </div>
   </div>
 
-  <script src="/app.js" defer></script>
+  <script src="/app.js?v=20260719-180947" defer></script>
 </body>
 </html>

@@ -13,6 +13,7 @@ import {
   eventReminderStatements,
   requestedReminders,
 } from "../../_lib/reminders.js";
+import { ensureTagIdsExist, replaceTagStatements, validateTagIds } from "../../_lib/tags.js";
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -44,6 +45,9 @@ export async function onRequestPost(context) {
     }
     const reminderRequest = requestedReminders(item, toIntBool(item.all_day) === 1);
     if (reminderRequest.error) { skipped++; continue; }
+    const tagMessage = item.tag_ids === undefined ? null : validateTagIds(item.tag_ids);
+    if (tagMessage) { skipped++; continue; }
+    if (item.tag_ids !== undefined && await ensureTagIdsExist(env, item.tag_ids)) { skipped++; continue; }
 
     const source = item.source ?? "web";
     const externalId = item.external_id ?? null;
@@ -87,6 +91,11 @@ export async function onRequestPost(context) {
         if (reminderRequest.provided) statements.push(configStatement(env.DB, "event_reminder_configs", "event_id", existing.id, reminders, now));
         statements.push(...eventReminderStatements(env.DB, event, reminders));
       }
+      if (item.tag_ids !== undefined) {
+        const table = existing.series_id ? "event_series_tags" : "event_tags";
+        const column = existing.series_id ? "series_id" : "event_id";
+        statements.push(...replaceTagStatements(env.DB, table, column, existing.series_id || existing.id, item.tag_ids, now));
+      }
       await batch(env.DB, statements);
       updated++;
     } else {
@@ -106,6 +115,7 @@ export async function onRequestPost(context) {
         event.category, event.color, event.group_title, event.source, event.external_id,
         event.created_at, event.updated_at, event.deleted_at)];
       if (reminderRequest.provided) statements.push(configStatement(env.DB, "event_reminder_configs", "event_id", id, reminders, now));
+      if (item.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "event_tags", "event_id", id, item.tag_ids, now));
       statements.push(...eventReminderStatements(env.DB, event, reminders));
       await batch(env.DB, statements);
       created++;

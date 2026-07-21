@@ -4,6 +4,7 @@
 import { queryAll } from "../_lib/db.js";
 import { error } from "../_lib/response.js";
 import { rowToEvent } from "../_lib/events.js";
+import { attachTagsToEvents } from "../_lib/tags.js";
 
 const CSV_COLUMNS = [
   "id",
@@ -17,6 +18,8 @@ const CSV_COLUMNS = [
   "group_title",
   "source",
   "external_id",
+  "tag_ids",
+  "tag_names",
 ];
 
 function csvEscape(value) {
@@ -31,7 +34,12 @@ function csvEscape(value) {
 function toCsv(events) {
   const lines = [CSV_COLUMNS.join(",")];
   for (const e of events) {
-    lines.push(CSV_COLUMNS.map((c) => csvEscape(e[c])).join(","));
+    const row = {
+      ...e,
+      tag_ids: (e.tags || []).map((tag) => tag.id).join("|"),
+      tag_names: (e.tags || []).map((tag) => tag.name).join("|"),
+    };
+    lines.push(CSV_COLUMNS.map((c) => csvEscape(row[c])).join(","));
   }
   return lines.join("\r\n") + "\r\n";
 }
@@ -52,7 +60,8 @@ function toMarkdown(events) {
     for (const e of items) {
       const time = e.all_day ? "All day" : e.start_time.slice(11, 16);
       const category = e.category ? ` [${e.category}]` : "";
-      lines.push(`- ${time} ${e.title}${category}`);
+      const tags = e.tags?.length ? ` {${e.tags.map((tag) => tag.name).join(" · ")}}` : "";
+      lines.push(`- ${time} ${e.title}${category}${tags}`);
     }
     lines.push("");
   }
@@ -68,7 +77,7 @@ export async function onRequestGet(context) {
     env.DB,
     "SELECT * FROM events WHERE deleted_at IS NULL ORDER BY start_time ASC",
   );
-  const events = rows.map(rowToEvent);
+  const events = (await attachTagsToEvents(env, rows, "deleted_at IS NULL", [])).map(rowToEvent);
 
   if (format === "json") {
     return new Response(JSON.stringify({ ok: true, data: events }), {

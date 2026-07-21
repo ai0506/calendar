@@ -19,6 +19,7 @@ import {
   eventReminderStatements,
   requestedReminders,
 } from "../../_lib/reminders.js";
+import { ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../../_lib/tags.js";
 
 // 可被 PUT 更新的字段（id / created_at 不可改）
 const UPDATABLE = [
@@ -52,7 +53,8 @@ export async function onRequestGet(context) {
   const reminders = row.all_day
     ? []
     : await effectiveEventReminders(env, row.id, row.series_id || null);
-  return ok({ ...rowToEvent(row), reminders });
+  const tags = await tagsForOwner(env, row.series_id ? "event_series_tags" : "event_tags", row.series_id ? "series_id" : "event_id", row.series_id || row.id);
+  return ok({ ...rowToEvent(row), reminders, tags });
 }
 
 // PUT /api/events/:id
@@ -70,6 +72,9 @@ export async function onRequestPut(context) {
   if (existing.series_id && Object.prototype.hasOwnProperty.call(body, "reminders")) {
     return error("validation_error", "reminders for a recurring occurrence must be changed through the event series", 400);
   }
+  if (existing.series_id && Object.prototype.hasOwnProperty.call(body, "tag_ids")) {
+    return error("validation_error", "tags for a recurring occurrence must be changed through the event series", 400);
+  }
 
   const msg = validateEventInput(body, false);
   if (msg) return error("validation_error", msg, 400);
@@ -79,6 +84,12 @@ export async function onRequestPut(context) {
   const mergedAllDay = body.all_day === undefined ? existing.all_day : toIntBool(body.all_day);
   const reminderRequest = requestedReminders(body, mergedAllDay === 1);
   if (reminderRequest.error) return error("validation_error", reminderRequest.error, 400);
+  const tagMessage = body.tag_ids === undefined ? null : validateTagIds(body.tag_ids);
+  if (tagMessage) return error("validation_error", tagMessage, 400);
+  if (body.tag_ids !== undefined) {
+    const tagExistsMessage = await ensureTagIdsExist(env, body.tag_ids);
+    if (tagExistsMessage) return error("validation_error", tagExistsMessage, 400);
+  }
 
   // Changing only the category should also follow that category's color.
   // An explicitly supplied color still wins, so custom event colors remain supported.
@@ -119,10 +130,12 @@ export async function onRequestPut(context) {
     }
     statements.push(...eventReminderStatements(env.DB, updatedForPlan, reminders));
   }
+  if (body.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "event_tags", "event_id", params.id, body.tag_ids, now));
   await batch(env.DB, statements);
 
   const updated = await getActive(env, params.id);
-  return ok({ ...rowToEvent(updated), ...(reminders ? { reminders } : {}) });
+  const tags = await tagsForOwner(env, "event_tags", "event_id", params.id);
+  return ok({ ...rowToEvent(updated), ...(reminders ? { reminders } : {}), tags });
 }
 
 // DELETE /api/events/:id  —— 软删除

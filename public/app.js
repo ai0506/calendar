@@ -18,6 +18,15 @@ let selectedCat = null;
 let portraitTab = "preview";
 let categories = [];
 let activeFilters = new Set();
+let tags = [];
+let tagSuggestions = {};
+let activeTagFilters = new Set();
+let selectedTagIds = new Set();
+let ddlSelectedTagIds = new Set();
+let eventTagPickerExpanded = false;
+let deadlineTagPickerExpanded = false;
+let deadlineFormPrepared = false;
+let newModalPrefillIso = null;
 let eventsByDate = new Map();
 let deadlinesByDate = new Map();
 let newModalTab = "event";
@@ -27,8 +36,10 @@ let refreshTimer = null;
 let clockTimer = null;
 let refreshInFlight = false;
 let lastRangeKey = "";
+// Each entry caches BOTH events and deadlines for a range: { events, deadlines }.
+// Wider limit so prefetched neighbours (±2 months) aren't evicted before use.
 const rangeCache = new Map();
-const RANGE_CACHE_LIMIT = 6;
+const RANGE_CACHE_LIMIT = 16;
 let pendingDelete = null;
 let pendingDeadlineAction = null;
 let repeatIdempotencyKey = null;
@@ -36,6 +47,9 @@ let repeatWeekdayTouched = false;
 let toastTimer = null;
 let notificationTimer = null;
 let notificationInFlight = false;
+let notificationBaselineReady = false;
+let notificationSessionStartedAt = 0;
+let notificationUnreadCount = 0;
 const seenNotificationIds = new Set();
 let notificationItems = [];
 let detailContext = null;
@@ -84,6 +98,7 @@ function cacheElements() {
     fReminderOne: document.getElementById("fReminderOne"),
     fReminderTwo: document.getElementById("fReminderTwo"),
     catSwatches: document.getElementById("catSwatches"),
+    fTagPicker: document.getElementById("fTagPicker"),
     fRepeat: document.getElementById("fRepeat"),
     repeatPanel: document.getElementById("repeatPanel"),
     repeatWeeklyFields: document.getElementById("repeatWeeklyFields"),
@@ -100,6 +115,7 @@ function cacheElements() {
     dTimeField: document.getElementById("dTimeField"),
     dAllday: document.getElementById("dAllday"),
     dCatSwatches: document.getElementById("dCatSwatches"),
+    dTagPicker: document.getElementById("dTagPicker"),
     priSeg: document.getElementById("priSeg"),
     createDdlButton: document.getElementById("createDdlButton"),
     confirmScrim: document.getElementById("confirmScrim"),
@@ -122,6 +138,9 @@ function cacheElements() {
     notificationsScrim: document.getElementById("notificationsScrim"),
     notificationsList: document.getElementById("notificationsList"),
     notifReadAll: document.getElementById("notifReadAll"),
+    notificationDelivery: document.getElementById("notificationDelivery"),
+    notificationDeliveryText: document.getElementById("notificationDeliveryText"),
+    notificationPermissionButton: document.getElementById("notificationPermissionButton"),
     detailScrim: document.getElementById("detailScrim"),
     detailCatDot: document.getElementById("detailCatDot"),
     detailTitle: document.getElementById("detailTitle"),
@@ -139,6 +158,7 @@ function bindEvents() {
   document.querySelector("[data-action='close-notifications']").addEventListener("click", closeNotifications);
   els.notificationsButton.addEventListener("click", openNotifications);
   els.notifReadAll.addEventListener("click", markAllNotificationsRead);
+  els.notificationPermissionButton.addEventListener("click", requestBrowserNotificationPermission);
   document.querySelector("[data-action='close-confirm']").addEventListener("click", closeConfirm);
   document.querySelector("[data-action='close-complete']").addEventListener("click", closeComplete);
   document.querySelector("[data-action='close-reopen']").addEventListener("click", closeReopen);
@@ -244,9 +264,17 @@ async function enterAuthenticatedApp() {
   els.body.classList.add("is-authenticated");
   els.topbar.removeAttribute("aria-hidden");
   els.bodySplit.removeAttribute("aria-hidden");
+  // Tags are optional form metadata. Load them in the background so the
+  // calendar's primary data is not held behind two extra API requests.
+  const tagsReady = loadTags()
+    .then(() => {
+      if (els.body.classList.contains("is-authenticated")) render();
+    })
+    .catch(() => {});
   await loadCategories();
   render();
   await refreshVisibleData({ silent: false, force: true });
+  void tagsReady;
   startAutoRefresh();
   startClockRefresh();
   startNotificationPolling();
@@ -281,6 +309,17 @@ async function loadCategories() {
   activeFilters = new Set([...activeFilters].filter((name) => validNames.has(name)));
   if (activeFilters.size === 0) activeFilters = new Set(categories.map((cat) => cat.name));
   if (!selectedCat || !validNames.has(selectedCat)) selectedCat = categories[0]?.name || FALLBACK_CATEGORY.name;
+}
+
+async function loadTags() {
+  const [tagJson, suggestionJson] = await Promise.all([
+    apiFetch("/api/tags"),
+    apiFetch("/api/category-tag-suggestions"),
+  ]);
+  tags = Array.isArray(tagJson.data) ? tagJson.data : [];
+  tagSuggestions = suggestionJson.data && typeof suggestionJson.data === "object" ? suggestionJson.data : {};
+  const validIds = new Set(tags.map((tag) => tag.id));
+  activeTagFilters = new Set([...activeTagFilters].filter((id) => validIds.has(id)));
 }
 
 async function apiFetch(url, options = {}) {
@@ -336,6 +375,7 @@ function stopClockRefresh() {
 
 function startNotificationPolling() {
   stopNotificationPolling();
+  notificationSessionStartedAt = Date.now();
   pollNotifications();
   notificationTimer = setInterval(pollNotifications, 45_000);
 }
@@ -344,6 +384,9 @@ function stopNotificationPolling() {
   if (notificationTimer) clearInterval(notificationTimer);
   notificationTimer = null;
   notificationInFlight = false;
+  notificationBaselineReady = false;
+  notificationSessionStartedAt = 0;
+  notificationUnreadCount = 0;
   seenNotificationIds.clear();
   notificationItems = [];
   updateNotificationBadge(0);
@@ -355,18 +398,27 @@ async function pollNotifications() {
   try {
     const response = await apiFetch("/api/notifications?include_read=false&limit=50");
     const items = response.data?.items || [];
-    notificationItems = items;
+    const retainedReadItems = notificationItems.filter((item) => item.read_at && !items.some((fresh) => fresh.id === item.id));
+    notificationItems = [...items, ...retainedReadItems]
+      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+      .slice(0, 50);
     updateNotificationBadge(response.data?.unread_count || 0);
+    const firstPoll = !notificationBaselineReady;
     const newestByTarget = new Map();
-    items.slice().reverse().forEach((item) => newestByTarget.set(`${item.target_type}:${item.target_id}`, item));
-    newestByTarget.forEach((item) => {
-      if (seenNotificationIds.has(item.id)) return;
-      seenNotificationIds.add(item.id);
-      showToast(`${item.title}: ${item.message}`);
-      if ("Notification" in window && Notification.permission === "granted") {
-        new Notification(item.title, { body: item.message });
+    items.slice().reverse().forEach((item) => {
+      const createdAt = Date.parse(item.created_at);
+      const arrivedThisSession = Number.isFinite(createdAt) && createdAt >= notificationSessionStartedAt - 5_000;
+      if ((!firstPoll && !seenNotificationIds.has(item.id)) || (firstPoll && arrivedThisSession)) {
+        newestByTarget.set(`${item.target_type}:${item.target_id}`, item);
       }
+      seenNotificationIds.add(item.id);
     });
+    notificationBaselineReady = true;
+    newestByTarget.forEach((item) => {
+      showToast(`${item.title}: ${item.message}`);
+      showBrowserNotification(item);
+    });
+    if (els.notificationsScrim.classList.contains("open")) renderNotifications();
   } catch (err) {
     // Notification polling is optional and must not interrupt the calendar.
   } finally {
@@ -375,21 +427,22 @@ async function pollNotifications() {
 }
 
 function updateNotificationBadge(count) {
-  els.notificationBadge.hidden = !count;
-  els.notificationBadge.textContent = count > 99 ? "99+" : String(count || 0);
+  notificationUnreadCount = Math.max(0, Number(count) || 0);
+  els.notificationBadge.hidden = !notificationUnreadCount;
+  els.notificationBadge.textContent = notificationUnreadCount > 99 ? "99+" : String(notificationUnreadCount);
 }
 
 async function openNotifications() {
-  if ("Notification" in window && Notification.permission === "default") {
-    await Notification.requestPermission().catch(() => null);
-  }
   try {
     const response = await apiFetch("/api/notifications?include_read=true&limit=50");
     notificationItems = response.data?.items || [];
+    notificationItems.forEach((item) => seenNotificationIds.add(item.id));
+    notificationBaselineReady = true;
     updateNotificationBadge(response.data?.unread_count || 0);
   } catch (err) {
     showToast("Failed to load notifications.");
   }
+  syncNotificationDelivery();
   renderNotifications();
   els.notificationsScrim.classList.add("open");
 }
@@ -401,6 +454,47 @@ function closeNotifications() {
 function syncReadAllButton() {
   const hasUnread = notificationItems.some((item) => !item.read_at);
   els.notifReadAll.disabled = !hasUnread;
+}
+
+function syncNotificationDelivery() {
+  if (!("Notification" in window)) {
+    els.notificationDeliveryText.textContent = "Not supported by this browser.";
+    els.notificationPermissionButton.hidden = true;
+    return;
+  }
+  const permission = Notification.permission;
+  els.notificationPermissionButton.hidden = permission === "granted";
+  els.notificationPermissionButton.disabled = permission === "denied";
+  els.notificationPermissionButton.textContent = permission === "denied" ? "Blocked" : "Enable";
+  els.notificationDeliveryText.textContent = permission === "granted"
+    ? "Enabled while this calendar page is open."
+    : permission === "denied"
+      ? "Blocked in browser settings. In-app notifications still work."
+      : "Optional alerts while this calendar page is open.";
+}
+
+async function requestBrowserNotificationPermission() {
+  if (!("Notification" in window) || Notification.permission !== "default") return;
+  els.notificationPermissionButton.disabled = true;
+  await Notification.requestPermission().catch(() => null);
+  syncNotificationDelivery();
+}
+
+function showBrowserNotification(item) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  try {
+    const browserNotification = new Notification(item.title, {
+      body: item.message,
+      tag: `${item.target_type}:${item.target_id}`,
+    });
+    browserNotification.onclick = () => {
+      window.focus();
+      browserNotification.close();
+      void activateNotification(item);
+    };
+  } catch (_) {
+    // Browser alerts are an optional delivery channel; the in-app item remains available.
+  }
 }
 
 async function markAllNotificationsRead() {
@@ -425,19 +519,50 @@ function renderNotifications() {
     return;
   }
   els.notificationsList.innerHTML = notificationItems.map((item) => `<button type="button" class="notification-item ${item.read_at ? "" : "unread"}" data-notification-id="${escapeAttr(item.id)}">
-    <div class="notification-title">${escapeHtml(item.title)}</div>
+    <div class="notification-title-row"><div class="notification-title">${escapeHtml(item.title)}</div><span class="notification-kind">${item.target_type === "deadline" ? "Deadline" : "Event"}</span></div>
     <div class="notification-message">${escapeHtml(item.message)}</div>
-    <div class="notification-time">${new Date(item.created_at).toLocaleString()}</div>
+    <div class="notification-time">Reminder time · ${new Date(item.scheduled_at || item.created_at).toLocaleString()}</div>
   </button>`).join("");
   els.notificationsList.querySelectorAll("[data-notification-id]").forEach((button) => button.addEventListener("click", async () => {
     const id = button.dataset.notificationId;
-    try {
-      await apiFetch(`/api/notifications/${encodeURIComponent(id)}`, { method: "PATCH" });
-      notificationItems = notificationItems.map((item) => item.id === id ? { ...item, read_at: new Date().toISOString() } : item);
-      updateNotificationBadge(notificationItems.filter((item) => !item.read_at).length);
-      renderNotifications();
-    } catch (err) { showToast("Failed to mark notification read."); }
+    const item = notificationItems.find((candidate) => candidate.id === id);
+    if (item) await activateNotification(item);
   }));
+}
+
+async function markNotificationRead(item) {
+  if (item.read_at) return;
+  try {
+    await apiFetch(`/api/notifications/${encodeURIComponent(item.id)}`, { method: "PATCH" });
+    const readAt = new Date().toISOString();
+    notificationItems = notificationItems.map((candidate) => candidate.id === item.id ? { ...candidate, read_at: readAt } : candidate);
+    updateNotificationBadge(notificationUnreadCount - 1);
+  } catch (err) {
+    showToast("Could not mark this notification as read.");
+  }
+}
+
+async function activateNotification(item) {
+  await markNotificationRead(item);
+  closeNotifications();
+  const kind = item.target_type === "deadline" ? "deadline" : "event";
+  await openDetail(kind, item.target_id, { focusDate: true });
+}
+
+// Fetch a range's events + deadlines together and (optionally) cache them.
+async function fetchRangeData(range, { store = true } = {}) {
+  const rangeKey = `${range.from}|${range.to}`;
+  const eventsUrl = `/api/events?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`;
+  const deadlineFrom = addDateKey(range.from.slice(0, 10), -3);
+  const deadlineTo = addDateKey(range.to.slice(0, 10), 3);
+  const deadlineUrl = `/api/deadlines?from=${encodeURIComponent(deadlineFrom)}&to=${encodeURIComponent(deadlineTo)}&include_completed=true`;
+  const [json, deadlineJson] = await Promise.all([apiFetch(eventsUrl), apiFetch(deadlineUrl)]);
+  const payload = { events: json.data || [], deadlines: deadlineJson.data || [] };
+  if (store) {
+    rangeCache.set(rangeKey, payload);
+    trimRangeCache();
+  }
+  return payload;
 }
 
 async function refreshVisibleData({ silent = true, force = false } = {}) {
@@ -446,26 +571,21 @@ async function refreshVisibleData({ silent = true, force = false } = {}) {
   const rangeKey = `${range.from}|${range.to}`;
   if (!force && rangeKey === lastRangeKey && !silent) return;
 
+  // Instant paint: if we prefetched this month, render it fully (events AND
+  // deadlines) right away, then quietly refresh underneath.
   const cached = rangeCache.get(rangeKey);
   if (cached && rangeKey !== lastRangeKey) {
-    applyEvents(cached);
+    applyEvents(cached.events);
+    applyDeadlines(cached.deadlines);
     lastRangeKey = rangeKey;
     render();
   }
 
   refreshInFlight = true;
   try {
-    const url = `/api/events?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`;
-    const deadlineFrom = addDateKey(range.from.slice(0, 10), -3);
-    const deadlineTo = addDateKey(range.to.slice(0, 10), 3);
-    const deadlineUrl = `/api/deadlines?from=${encodeURIComponent(deadlineFrom)}&to=${encodeURIComponent(deadlineTo)}&include_completed=true`;
-    const [json, deadlineJson] = await Promise.all([apiFetch(url), apiFetch(deadlineUrl)]);
-    const rows = json.data || [];
-    const deadlineRows = deadlineJson.data || [];
-    rangeCache.set(rangeKey, rows);
-    trimRangeCache();
-    applyEvents(rows);
-    applyDeadlines(deadlineRows);
+    const payload = await fetchRangeData(range, { store: true });
+    applyEvents(payload.events);
+    applyDeadlines(payload.deadlines);
     lastRangeKey = rangeKey;
     render();
     prefetchAdjacentRanges();
@@ -484,23 +604,24 @@ function trimRangeCache() {
   }
 }
 
+// Warm the cache for the periods the user is one or two gestures away from,
+// so navigating shows data instantly instead of after a network round-trip.
 async function prefetchAdjacentRanges() {
-  if (currentView !== "month" && !isPortrait()) return;
-  for (const dir of [-1, 1]) {
-    const neighborDate = addMonths(viewDate, dir);
-    const { start, end } = getMonthGridRange(neighborDate);
-    const from = toLocalIso(start, "00:00");
-    const to = toLocalIso(end, "23:59");
-    const key = `${from}|${to}`;
-    if (rangeCache.has(key)) continue;
-    try {
-      const json = await apiFetch(`/api/events?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
-      rangeCache.set(key, json.data || []);
-      trimRangeCache();
-    } catch (err) {
-      // best-effort prefetch; ignore failures
-    }
+  const portraitMode = isPortrait();
+  const view = currentView;
+  const dates = [];
+  if (portraitMode || view === "month") {
+    for (const step of [-2, -1, 1, 2]) dates.push(addMonths(viewDate, step));
+  } else if (view === "week") {
+    for (const step of [-1, 1]) dates.push(addDays(viewDate, step * 7));
+  } else {
+    for (const step of [-2, -1, 1, 2]) dates.push(addDays(viewDate, step));
   }
+  await Promise.all(dates.map((date) => {
+    const range = computeRange(date, view, portraitMode);
+    if (rangeCache.has(`${range.from}|${range.to}`)) return null;
+    return fetchRangeData(range, { store: true }).catch(() => null);
+  }));
 }
 
 function applyEvents(rows) {
@@ -551,6 +672,7 @@ function adaptDeadline(row) {
     priority: row.priority || "default",
     status: row.status || (row.completed_at ? "completed" : row.is_overdue ? "overdue" : "open"),
     completedAt: row.completed_at || null,
+    tags: Array.isArray(row.tags) ? row.tags : [],
   };
 }
 
@@ -578,20 +700,26 @@ function adaptEvent(row) {
     dateKey,
     source: row.source || "web",
     seriesId: row.series_id || null,
+    tags: Array.isArray(row.tags) ? row.tags : [],
   };
 }
 
+// The visible from/to range for any date + view (used for both the current
+// view and prefetching neighbours).
+function computeRange(date, view, portraitMode) {
+  if (portraitMode || view === "month") {
+    const { start, end } = getMonthGridRange(date);
+    return { from: toLocalIso(start, "00:00"), to: toLocalIso(end, "23:59") };
+  }
+  if (view === "week") {
+    const start = startOfWeek(date);
+    return { from: toLocalIso(start, "00:00"), to: toLocalIso(addDays(start, 6), "23:59") };
+  }
+  return { from: toLocalIso(date, "00:00"), to: toLocalIso(date, "23:59") };
+}
+
 function getVisibleRange() {
-  if (isPortrait() || currentView === "month") {
-    const { start, end } = getMonthGridRange(viewDate);
-    return { from: toLocalIso(start, "00:00"), to: toLocalIso(end, "23:59") };
-  }
-  if (currentView === "week") {
-    const start = startOfWeek(viewDate);
-    const end = addDays(start, 6);
-    return { from: toLocalIso(start, "00:00"), to: toLocalIso(end, "23:59") };
-  }
-  return { from: toLocalIso(viewDate, "00:00"), to: toLocalIso(viewDate, "23:59") };
+  return computeRange(viewDate, currentView, isPortrait());
 }
 
 function switchView(view) {
@@ -748,7 +876,7 @@ function renderMonth() {
       <div class="events">
         ${shown.map((item) => item.type === "deadline"
           ? `<div class="ddl-chip ${item.value.status === "completed" ? "done" : item.value.status}" style="--ddl-color:${deadlineColor(item.value)};--ddl-bg:${item.value.bg}" data-deadline-id="${escapeAttr(item.value.id)}" title="${escapeAttr(item.value.title)}">⚑ ${escapeHtml(item.value.title)}</div>`
-          : `<div class="event-chip ${isOngoing(item.value, date) ? "ongoing" : ""}" style="background:${item.value.bg}; color:${item.value.color}" data-open-day="${iso}">${eventTitleHTML(item.value)}</div>`).join("")}
+          : `<div class="event-chip ${isOngoing(item.value, date) ? "ongoing" : ""}" style="background:${item.value.bg}; color:${inkColor(item.value.color)}" data-open-day="${iso}">${eventTitleHTML(item.value)}</div>`).join("")}
         ${more > 0 ? `<div class="more-link">+${more} more</div>` : ""}
       </div>
     </div>`;
@@ -890,7 +1018,9 @@ function renderInspector() {
         <li class="cat-item ${activeFilters.has(cat.name) ? "" : "off"}" data-category="${escapeHtml(cat.name)}">
           <span class="cat-dot" style="background:${cat.color}"></span>${escapeHtml(cat.name)}
         </li>`).join("")}
-    </ul>`;
+    </ul>
+    ${tags.length ? `<div class="inspector-heading tag-filter-heading">Tags</div>
+    <div class="tag-filter-list">${tags.map((tag) => `<button type="button" class="tag-filter ${activeTagFilters.has(tag.id) ? "selected" : ""}" data-tag-filter="${escapeAttr(tag.id)}">${escapeHtml(tag.name)}</button>`).join("")}</div>` : ""}`;
   bindInspectorActions(els.inspector);
 }
 
@@ -916,6 +1046,9 @@ function bindInspectorActions(root) {
   root.querySelectorAll("[data-category]").forEach((item) => {
     item.addEventListener("click", () => toggleFilter(item.dataset.category));
   });
+  root.querySelectorAll("[data-tag-filter]").forEach((item) => {
+    item.addEventListener("click", () => toggleTagFilter(item.dataset.tagFilter));
+  });
   root.querySelectorAll("[data-deadline-id]").forEach((item) => {
     item.addEventListener("click", () => openDetail("deadline", item.dataset.deadlineId));
   });
@@ -930,6 +1063,12 @@ function bindInspectorActions(root) {
 function toggleFilter(name) {
   if (activeFilters.has(name)) activeFilters.delete(name);
   else activeFilters.add(name);
+  render();
+}
+
+function toggleTagFilter(id) {
+  if (activeTagFilters.has(id)) activeTagFilters.delete(id);
+  else activeTagFilters.add(id);
   render();
 }
 
@@ -981,7 +1120,7 @@ function buildAllDayRowHTML(days) {
     const deadlines = getDeadlinesFor(date).filter((deadline) => deadline.allDay);
     return `<div class="allday-cell">${deadlines.map((deadline) => `
       <div class="allday-ddl ${deadline.status === "completed" ? "done" : deadline.status}" style="--ddl-color:${deadlineColor(deadline)};--ddl-bg:${deadline.bg}" data-deadline-id="${escapeAttr(deadline.id)}" title="${escapeAttr(deadline.title)}">⚑ ${escapeHtml(deadline.title)}</div>`).join("")}${events.map((event) => `
-      <div class="allday-chip" data-open-event="${escapeAttr(event.id)}" data-event-date="${isoKey(date)}" style="background:${event.bg};color:${event.color}">
+      <div class="allday-chip" data-open-event="${escapeAttr(event.id)}" data-event-date="${isoKey(date)}" style="background:${event.bg};color:${inkColor(event.color)}">
         <span class="t">${eventTitleHTML(event)}</span>
         <button type="button" class="allday-delete" data-delete-id="${event.id}" data-delete-title="${escapeAttr(event.title)}" data-series-id="${escapeAttr(event.seriesId || "")}">x</button>
       </div>`).join("")}</div>`;
@@ -1005,7 +1144,7 @@ function buildTimeGridHTML(days) {
       const height = Math.max(timeToMin(event.end) - timeToMin(event.start), 26);
       const widthPct = 100 / event.cols;
       const leftPct = event.col * widthPct;
-      return `<div class="tl-event ${isOngoing(event, date) ? "ongoing" : ""}" data-open-event="${escapeAttr(event.id)}" data-event-date="${isoKey(date)}" style="top:${top}px;height:${height}px;left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);background:${event.bg};color:${event.color}">
+      return `<div class="tl-event ${isOngoing(event, date) ? "ongoing" : ""}" data-open-event="${escapeAttr(event.id)}" data-event-date="${isoKey(date)}" style="top:${top}px;height:${height}px;left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);background:${event.bg};color:${inkColor(event.color)}">
         <span class="t">${eventTitleHTML(event)}</span><span class="tm">${event.start} - ${event.end}${eventRelativeLabel(event, date) ? ` · <span class="event-relative">${eventRelativeLabel(event, date)}</span>` : ""}${isOngoing(event, date) ? '<span class="now-badge">Now</span>' : ""}</span>
         <button type="button" class="tl-delete" data-delete-id="${event.id}" data-delete-title="${escapeAttr(event.title)}" data-series-id="${escapeAttr(event.seriesId || "")}">x</button>
       </div>`;
@@ -1021,7 +1160,7 @@ function buildTimeGridHTML(days) {
       const statusClass = deadline.status === "completed" ? "done" : "";
       const labelTop = -9 - deadlineStack * 15;
       const labelZ = 10 + deadlineStack;
-      return `<div class="tl-ddl-line ${statusClass}" style="top:${mins}px;border-top-color:${deadlineColor(deadline)}"><span class="tl-ddl-label" title="${escapeAttr(deadline.title)} · ${escapeAttr(deadline.time || "")}" style="top:${labelTop}px;z-index:${labelZ};color:${deadlineColor(deadline)}" data-deadline-id="${escapeAttr(deadline.id)}">⚑ ${escapeHtml(deadline.title)} · ${deadline.time}${deadline.status === "overdue" ? " ⚠" : ""}</span></div>`;
+      return `<div class="tl-ddl-line ${statusClass}" style="top:${mins}px;border-top-color:${deadlineColor(deadline)}"><span class="tl-ddl-label" title="${escapeAttr(deadline.title)} · ${escapeAttr(deadline.time || "")}" style="top:${labelTop}px;z-index:${labelZ};color:${inkColor(deadlineColor(deadline))}" data-deadline-id="${escapeAttr(deadline.id)}">⚑ ${escapeHtml(deadline.title)} · ${deadline.time}${deadline.status === "overdue" ? " ⚠" : ""}</span></div>`;
     }).join("");
     const nowLine = sameDay(date, today()) && now >= GRID_START_HOUR * 60 && now <= GRID_END_HOUR * 60
       ? `<div class="now-line" style="top:${now - GRID_START_HOUR * 60}px"></div>`
@@ -1054,7 +1193,7 @@ function agendaItemHTML(event, date) {
     <div class="agenda-body">
       <div class="agenda-title">${eventTitleHTML(event)}</div>
       <div class="agenda-time">${isAllDayEvent(event) ? "All-day" : `${event.start} - ${event.end}`}${eventRelativeLabel(event, date) ? `<span class="event-relative"> · ${eventRelativeLabel(event, date)}</span>` : ""}${isOngoing(event, date) ? '<span class="now-badge">Now</span>' : ""}</div>
-      <span class="agenda-cat" style="color:${event.color}">${escapeHtml(event.cat)}</span>
+      <span class="agenda-cat" style="color:${inkColor(event.color)}">${escapeHtml(event.cat)}</span>
     </div>
     <button type="button" class="agenda-delete" data-delete-id="${event.id}" data-delete-title="${escapeAttr(event.title)}" data-series-id="${escapeAttr(event.seriesId || "")}">x</button>
   </div>`;
@@ -1109,14 +1248,71 @@ function renderSwatches() {
     button.addEventListener("click", () => {
       selectedCat = button.dataset.cat;
       renderSwatches();
+      renderEventTagPicker();
     });
   });
 }
 
-function openModal(prefillIso) {
-  setNewTab("event");
+function categoryIdForName(name) {
+  return categories.find((category) => category.name === name)?.id || null;
+}
+
+function orderedTagsForCategory(categoryName) {
+  const categoryId = categoryIdForName(categoryName);
+  const suggested = new Set(tagSuggestions[categoryId] || []);
+  return tags.slice()
+    .sort((a, b) => Number(suggested.has(b.id)) - Number(suggested.has(a.id)) || a.sort_order - b.sort_order || a.name.localeCompare(b.name));
+}
+
+function tagPickerHtml(categoryName, selectedIds, expanded) {
+  const categoryId = categoryIdForName(categoryName);
+  const suggested = new Set(tagSuggestions[categoryId] || []);
+  const ordered = orderedTagsForCategory(categoryName);
+  if (!ordered.length) return '<span class="tag-picker-empty">No tags available</span>';
+  const visible = expanded ? ordered : ordered.slice(0, 6);
+  const chips = visible.map((tag) => {
+    const selected = selectedIds.has(tag.id);
+    const disabled = !selected && selectedIds.size >= 5;
+    return `<button type="button" class="tag-chip ${selected ? "selected" : ""} ${suggested.has(tag.id) ? "suggested" : ""}" data-tag-id="${escapeAttr(tag.id)}" ${disabled ? "disabled" : ""}>${escapeHtml(tag.name)}</button>`;
+  }).join("");
+  if (ordered.length <= 6) return chips;
+  const label = expanded ? "Show less" : `Show more (${ordered.length - 6})`;
+  return `${chips}<button type="button" class="tag-picker-toggle" data-tag-picker-toggle>${label}</button>`;
+}
+
+function toggleSelectedTag(selectedIds, id) {
+  if (selectedIds.has(id)) selectedIds.delete(id);
+  else if (selectedIds.size < 5) selectedIds.add(id);
+}
+
+function renderEventTagPicker() {
+  els.fTagPicker.innerHTML = tagPickerHtml(selectedCat, selectedTagIds, eventTagPickerExpanded);
+  els.fTagPicker.querySelectorAll("[data-tag-id]").forEach((button) => button.addEventListener("click", () => {
+    toggleSelectedTag(selectedTagIds, button.dataset.tagId);
+    renderEventTagPicker();
+  }));
+  els.fTagPicker.querySelector("[data-tag-picker-toggle]")?.addEventListener("click", () => {
+    eventTagPickerExpanded = !eventTagPickerExpanded;
+    renderEventTagPicker();
+  });
+}
+
+function renderDeadlineTagPicker() {
+  els.dTagPicker.innerHTML = tagPickerHtml(ddlSelectedCat, ddlSelectedTagIds, deadlineTagPickerExpanded);
+  els.dTagPicker.querySelectorAll("[data-tag-id]").forEach((button) => button.addEventListener("click", () => {
+    toggleSelectedTag(ddlSelectedTagIds, button.dataset.tagId);
+    renderDeadlineTagPicker();
+  }));
+  els.dTagPicker.querySelector("[data-tag-picker-toggle]")?.addEventListener("click", () => {
+    deadlineTagPickerExpanded = !deadlineTagPickerExpanded;
+    renderDeadlineTagPicker();
+  });
+}
+
+function openModal(prefillIso, initialTab = "event") {
+  newModalPrefillIso = prefillIso || isoKey(selectedDate);
   els.fTitle.value = "";
-  els.fDate.value = prefillIso || isoKey(selectedDate);
+  els.fDate.value = newModalPrefillIso;
   els.fAllday.checked = false;
   els.fStart.value = "09:00";
   els.fEnd.value = "10:00";
@@ -1126,6 +1322,9 @@ function openModal(prefillIso) {
   els.fRepeatEnd.value = "date";
   els.fRepeatEndDate.value = addDateKey(els.fDate.value, 30);
   els.fRepeatCount.value = "10";
+  selectedTagIds = new Set();
+  eventTagPickerExpanded = false;
+  deadlineFormPrepared = false;
   repeatIdempotencyKey = crypto.randomUUID();
   repeatWeekdayTouched = false;
   setDefaultRepeatWeekday();
@@ -1133,11 +1332,11 @@ function openModal(prefillIso) {
   toggleAllDayFields();
   hideTimeError();
   renderSwatches();
+  renderEventTagPicker();
   syncRepeatUI();
   els.createButton.disabled = false;
-  prepareDeadlineForm(prefillIso);
+  setNewTab(initialTab);
   els.eventScrim.classList.add("open");
-  setTimeout(() => els.fTitle.focus(), 100);
 }
 
 function setNewTab(tab) {
@@ -1149,24 +1348,27 @@ function setNewTab(tab) {
   els.ntDdl.setAttribute("aria-selected", String(!eventActive));
   els.eventForm.hidden = !eventActive;
   els.ddlForm.hidden = eventActive;
-  if (eventActive) setTimeout(() => els.fTitle.focus(), 50);
-  else setTimeout(() => els.dTitle.focus(), 50);
+  if (!eventActive && !deadlineFormPrepared) prepareDeadlineForm(newModalPrefillIso);
+  if (!isPortrait()) setTimeout(() => (eventActive ? els.fTitle : els.dTitle).focus(), 50);
 }
 
 function openDeadlineModal(prefillIso) {
-  openModal(prefillIso || isoKey(selectedDate));
-  setNewTab("ddl");
+  openModal(prefillIso || isoKey(selectedDate), "ddl");
 }
 
 function prepareDeadlineForm(prefillIso) {
+  deadlineFormPrepared = true;
   els.dTitle.value = "";
   els.dDate.value = prefillIso || isoKey(selectedDate);
   els.dTime.value = "18:00";
   els.dAllday.checked = false;
   ddlSelectedCat = selectedCat || categories[0]?.name || FALLBACK_CATEGORY.name;
   ddlPriority = "default";
+  ddlSelectedTagIds = new Set();
+  deadlineTagPickerExpanded = false;
   toggleDdlAllDay();
   renderDdlSwatches();
+  renderDeadlineTagPicker();
   selectDdlPriority("default");
   els.createDdlButton.disabled = false;
   els.createDdlButton.textContent = "Create";
@@ -1177,6 +1379,7 @@ function renderDdlSwatches() {
   els.dCatSwatches.querySelectorAll("[data-ddl-cat]").forEach((button) => button.addEventListener("click", () => {
     ddlSelectedCat = button.dataset.ddlCat;
     renderDdlSwatches();
+    renderDeadlineTagPicker();
   }));
 }
 
@@ -1203,7 +1406,7 @@ async function submitDeadline(event) {
   try {
     await apiFetch("/api/deadlines", {
       method: "POST",
-      body: JSON.stringify({ title, due_time, all_day: allDay, category: category.name, color: "default", priority: ddlPriority, source: "web" }),
+      body: JSON.stringify({ title, due_time, all_day: allDay, category: category.name, color: "default", priority: ddlPriority, tag_ids: [...ddlSelectedTagIds], source: "web" }),
     });
     selectedDate = parseDateKey(els.dDate.value);
     viewDate = parseDateKey(els.dDate.value);
@@ -1250,6 +1453,7 @@ async function submitEvent(event) {
     category: category.name,
     color: category.color,
     source: "web",
+    tag_ids: [...selectedTagIds],
     ...(!allDay ? { reminders: reminderValues } : {}),
   };
 
@@ -1356,7 +1560,18 @@ function detailRow(label, valueHtml, valueClass = "") {
   return `<div class="detail-row"><div class="detail-label">${label}</div><div class="detail-value ${valueClass}">${valueHtml}</div></div>`;
 }
 
-async function openDetail(kind, id) {
+function focusCalendarOnTarget(kind, row) {
+  const value = kind === "deadline" ? row.due_time : row.start_time;
+  const targetKey = String(value || "").slice(0, 10);
+  if (!isValidDateKey(targetKey)) return;
+  selectedDate = parseDateKey(targetKey);
+  viewDate = parseDateKey(targetKey);
+  lastRangeKey = "";
+  render();
+  void refreshVisibleData({ silent: true, force: true });
+}
+
+async function openDetail(kind, id, { focusDate = false } = {}) {
   closePopover();
   detailContext = { kind, id };
   els.detailCatDot.style.background = "var(--muted)";
@@ -1369,6 +1584,7 @@ async function openDetail(kind, id) {
     const response = await apiFetch(path);
     if (!detailContext || detailContext.id !== id) return; // superseded by another open/close
     const data = response.data || {};
+    if (focusDate) focusCalendarOnTarget(kind, data);
     if (kind === "deadline") renderDeadlineDetail(data);
     else renderEventDetail(data);
   } catch (err) {
@@ -1395,6 +1611,7 @@ function renderEventDetail(row) {
     detailRow("Date", escapeHtml(dateText)),
     detailRow("Time", escapeHtml(timeText)),
   ];
+  if (event.tags.length) rows.push(detailRow("Tags", event.tags.map((tag) => `<span class="detail-tag">${escapeHtml(tag.name)}</span>`).join(" ")));
   if (event.seriesId) rows.push(detailRow("Repeats", "Part of a repeating series"));
   if (!isAllDayEvent(event)) {
     rows.push(detailRow("Reminders", reminders.length ? reminders.map(reminderLabel).map(escapeHtml).join("<br>") : "No reminders", reminders.length ? "" : "muted"));
@@ -1427,6 +1644,7 @@ function renderDeadlineDetail(row) {
     detailRow("Status", `<span class="detail-status ${statusClass}">${statusText}</span>`),
     detailRow("Notes", description ? `<span class="detail-desc">${escapeHtml(description)}</span>` : "None", description ? "" : "muted"),
   ];
+  if (deadline.tags.length) rows.splice(3, 0, detailRow("Tags", deadline.tags.map((tag) => `<span class="detail-tag">${escapeHtml(tag.name)}</span>`).join(" ")));
   els.detailBody.innerHTML = rows.join("");
   const toggleLabel = deadline.status === "completed" ? "Reopen" : "Complete";
   els.detailActions.innerHTML = `
@@ -1634,7 +1852,12 @@ function calculateRepeatPreview({ frequency, startDate, weekdays, endDate, occur
 }
 
 function getEventsFor(date) {
-  return (eventsByDate.get(isoKey(date)) || []).filter((event) => activeFilters.has(event.cat));
+  return (eventsByDate.get(isoKey(date)) || []).filter(matchesFilters);
+}
+
+function matchesFilters(item) {
+  if (!activeFilters.has(item.cat)) return false;
+  return activeTagFilters.size === 0 || (item.tags || []).some((tag) => activeTagFilters.has(tag.id));
 }
 
 function findDeadline(id) {
@@ -1702,7 +1925,7 @@ async function confirmReopen() {
 }
 
 function getDeadlinesFor(date) {
-  return (deadlinesByDate.get(isoKey(date)) || []).filter((deadline) => activeFilters.has(deadline.cat));
+  return (deadlinesByDate.get(isoKey(date)) || []).filter(matchesFilters);
 }
 
 function deadlineColor(deadline) {
@@ -1732,7 +1955,7 @@ function quickDeadlines(date = selectedDate) {
   const windowDays = { high: 3, default: 2, low: 1 };
   const selectedStart = startOfDay(date).getTime();
   return [...deadlinesByDate.values()].flat()
-    .filter((deadline) => activeFilters.has(deadline.cat))
+    .filter(matchesFilters)
     .filter((deadline) => Math.abs((new Date(`${deadline.dateKey}T00:00:00`).getTime() - selectedStart) / 86400000) <= (windowDays[deadline.priority] || 2))
     .sort((a, b) => ({ high: 0, default: 1, low: 2 }[a.priority] - ({ high: 0, default: 1, low: 2 }[b.priority])) || a.dueMs - b.dueMs);
 }
@@ -1921,8 +2144,19 @@ function toLocalIso(date, time) {
 
 function colorToSoftBg(color) {
   const rgb = parseHexColor(color);
-  if (!rgb) return "#F1F1F3";
-  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.13)`;
+  if (!rgb) return "var(--fill)";
+  // Blend the category color into a theme-aware base so tinted chips stay
+  // legible in both light and dark mode (the base flips with the palette).
+  return `color-mix(in srgb, rgb(${rgb.r} ${rgb.g} ${rgb.b}) 17%, var(--chip-base))`;
+}
+
+// Foreground text color for colored labels. Category colors are mid-dark
+// (Tailwind-600-ish) and read poorly as text on a dark tint, so mix toward
+// the theme ink: darker in light mode, lighter in dark mode.
+function inkColor(color) {
+  const rgb = parseHexColor(color);
+  if (!rgb) return "var(--ink)";
+  return `color-mix(in srgb, rgb(${rgb.r} ${rgb.g} ${rgb.b}) 74%, var(--chip-ink))`;
 }
 
 function parseHexColor(color) {
@@ -1960,3 +2194,342 @@ function showToast(message) {
 function setLoading(isLoading) {
   els.loadingScreen.classList.toggle("hidden", !isLoading);
 }
+
+/* =========================================================================
+   AppleFX — the fluid-interaction layer (Apple Preview only)
+   -------------------------------------------------------------------------
+   Layers spring-based, interruptible, velocity-aware motion on top of the
+   shared render logic above, without touching it. It works purely by
+   observing the `.open` class the app toggles on each `.scrim`, so the data
+   and rendering code stays identical to production.
+
+   Principles applied (from the apple-design skill):
+     • Response: press feedback is CSS :active (fires on pointer-down).
+     • Direct manipulation: sheets track the finger 1:1 with the grab offset.
+     • Interruptibility: every animation starts from the live on-screen value
+       and can be grabbed mid-flight; velocity is carried through.
+     • Behavior over animation: springs, not fixed-duration keyframes.
+     • Velocity handoff + momentum projection on release (scroll-style decay).
+     • Rubber-banding at the top edge; symmetric enter/exit paths.
+   ========================================================================= */
+(function AppleFX() {
+  const reduce = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const portrait = () => (typeof isPortrait === "function" ? isPortrait() : window.innerWidth < window.innerHeight);
+
+  function haptic(ms) {
+    if (reduce()) return;
+    if (navigator.vibrate) { try { navigator.vibrate(ms); } catch (_) {} }
+  }
+
+  // Apple's momentum projection (exponential decay, not v²/2a). Section 6.
+  function project(velocity, decel = 0.998) {
+    return (velocity / 1000) * decel / (1 - decel);
+  }
+
+  // Rubber-banding resistance past a boundary. Section 9.
+  function rubberband(overshoot, dimension, c = 0.55) {
+    return (overshoot * dimension * c) / (dimension + c * Math.abs(overshoot));
+  }
+
+  // Interruptible spring integrator, parameterised by response + bounce
+  // (Apple's designer-facing model). bounce 0 → critically damped, no overshoot.
+  function makeSpring({ from, to, velocity = 0, response = 0.4, bounce = 0, precision = 0.5, onUpdate, onDone }) {
+    let value = from;
+    let v = velocity;
+    let target = to;
+    let raf = null;
+    let last = null;
+    let dead = false;
+    const ratio = clamp(1 - bounce, 0.1, 1);
+    const omega = (2 * Math.PI) / response;
+    const k = omega * omega;
+    const c = 2 * ratio * omega;
+    const velEps = Math.max(precision * 8, 0.02);
+
+    function frame(ts) {
+      if (dead) return;
+      if (last == null) last = ts;
+      let dt = (ts - last) / 1000;
+      last = ts;
+      if (dt > 0.064) dt = 0.064; // clamp after a tab-switch stall
+      const steps = Math.max(1, Math.ceil(dt / (1 / 240)));
+      const h = dt / steps;
+      for (let i = 0; i < steps; i++) {
+        const a = -k * (value - target) - c * v;
+        v += a * h;
+        value += v * h;
+      }
+      if (Math.abs(value - target) < precision && Math.abs(v) < velEps) {
+        value = target;
+        onUpdate(value, 0);
+        dead = true;
+        if (onDone) onDone();
+        return;
+      }
+      onUpdate(value, v);
+      raf = requestAnimationFrame(frame);
+    }
+    raf = requestAnimationFrame(frame);
+
+    return {
+      setTarget(t) { target = t; },
+      retarget(t, keepVel) { target = t; if (!keepVel) v = 0; },
+      get value() { return value; },
+      get vel() { return v; },
+      stop() { dead = true; if (raf) cancelAnimationFrame(raf); raf = null; },
+    };
+  }
+
+  // ---- Sheet / modal present + dismiss + drag ---------------------------
+  class Sheet {
+    constructor(scrim) {
+      this.scrim = scrim;
+      this.modal = scrim.querySelector(".modal");
+      this.spring = null;
+      this.ty = 0;            // portrait translateY in px
+      this.p = 0;             // desktop progress 0..1
+      this.sheetHeight = 0;
+      this.dragging = false;
+      this.history = [];
+      this.wasOpen = false;
+      // Rest hidden: inline opacity 0 wins over CSS .scrim.open so there's no flash.
+      this.scrim.style.opacity = "0";
+      this.scrim.style.transition = "none";
+      this.modal.style.transition = "none";
+      this._observe();
+      this._bindDrag();
+    }
+
+    _observe() {
+      const obs = new MutationObserver(() => {
+        const open = this.scrim.classList.contains("open");
+        if (open === this.wasOpen) return;
+        this.wasOpen = open;
+        if (open) this.present();
+        else this.dismiss(this._releaseVel || 0);
+        this._releaseVel = 0;
+      });
+      obs.observe(this.scrim, { attributes: true, attributeFilter: ["class"] });
+    }
+
+    _measureSheetHeight() {
+      this.sheetHeight = this.modal.offsetHeight + 56;
+      return this.sheetHeight;
+    }
+
+    _applyPortrait() {
+      this.modal.style.transform = `translateY(${this.ty}px)`;
+      const h = this.sheetHeight || this._measureSheetHeight();
+      this.scrim.style.opacity = String(clamp(1 - this.ty / h, 0, 1));
+    }
+    _applyDesktop() {
+      const s = 0.96 + 0.04 * this.p;
+      const y = (1 - this.p) * 8;
+      this.modal.style.transform = `translateY(${y}px) scale(${s})`;
+      this.scrim.style.opacity = String(clamp(this.p, 0, 1));
+    }
+
+    present() {
+      if (this.spring) this.spring.stop();
+      if (reduce()) { this._fade(1); return; }
+      if (portrait()) {
+        const h = this._measureSheetHeight();
+        this.ty = this.dragging ? this.ty : h;
+        this._applyPortrait();
+        this.spring = makeSpring({
+          from: this.ty, to: 0, velocity: 0, response: 0.22, bounce: 0.04, precision: 0.5,
+          onUpdate: (val) => { this.ty = val; this._applyPortrait(); },
+          onDone: () => { this.ty = 0; this._applyPortrait(); },
+        });
+      } else {
+        this.p = 0;
+        this._applyDesktop();
+        this.spring = makeSpring({
+          from: 0, to: 1, velocity: 0, response: 0.26, bounce: 0.06, precision: 0.004,
+          onUpdate: (val) => { this.p = val; this._applyDesktop(); },
+        });
+      }
+    }
+
+    dismiss(releaseVel) {
+      if (this.spring) this.spring.stop();
+      if (reduce()) { this._fade(0); return; }
+      if (portrait()) {
+        const h = this._measureSheetHeight();
+        this.spring = makeSpring({
+          from: this.ty, to: h, velocity: releaseVel || 0, response: 0.22, bounce: 0, precision: 0.5,
+          onUpdate: (val) => { this.ty = val; this._applyPortrait(); },
+          onDone: () => { this._reset(); },
+        });
+      } else {
+        this.spring = makeSpring({
+          from: this.p, to: 0, velocity: 0, response: 0.24, bounce: 0, precision: 0.004,
+          onUpdate: (val) => { this.p = val; this._applyDesktop(); },
+          onDone: () => { this._reset(); },
+        });
+      }
+    }
+
+    // Reduced-motion equivalent: a short opacity cross-fade, no transform.
+    _fade(to) {
+      this.modal.style.transform = "none";
+      this.scrim.style.transition = "opacity .18s ease";
+      requestAnimationFrame(() => { this.scrim.style.opacity = String(to); });
+      if (to === 0) setTimeout(() => this._reset(), 200);
+    }
+
+    _reset() {
+      this.scrim.style.opacity = "0";
+      this.scrim.style.transition = "none";
+      this.modal.style.transform = "";
+      this.ty = 0; this.p = 0; this.sheetHeight = 0;
+    }
+
+    _vel() {
+      const h = this.history;
+      if (h.length < 2) return 0;
+      const a = h[0], b = h[h.length - 1];
+      const dt = (b.t - a.t) / 1000;
+      return dt > 0 ? (b.y - a.y) / dt : 0;
+    }
+
+    _bindDrag() {
+      const ignore = "input,select,textarea,button,[contenteditable],.event-form-body,.ddl-form-body,.detail-body,.notifications-list,.repeat-panel";
+      this.modal.addEventListener("pointerdown", (e) => {
+        if (!portrait() || reduce()) return;
+        const grab = e.target.closest(".sheet-grab");
+        if (!grab && e.target.closest(ignore)) return; // let inputs / scroll work
+        if (this.spring) this.spring.stop();            // grab mid-flight (interruptible)
+        this.dragging = true;
+        this.startY = e.clientY;
+        this.startTy = this.ty;
+        this.history = [{ t: performance.now(), y: e.clientY }];
+        this.modal.setPointerCapture(e.pointerId);
+      });
+      this.modal.addEventListener("pointermove", (e) => {
+        if (!this.dragging) return;
+        let ty = this.startTy + (e.clientY - this.startY);
+        if (ty < 0) ty = rubberband(ty, window.innerHeight); // resist dragging up
+        this.ty = ty;
+        this._applyPortrait();
+        this.history.push({ t: performance.now(), y: e.clientY });
+        if (this.history.length > 6) this.history.shift();
+      });
+      const end = (e) => {
+        if (!this.dragging) return;
+        this.dragging = false;
+        try { this.modal.releasePointerCapture(e.pointerId); } catch (_) {}
+        const vel = this._vel();
+        const h = this._measureSheetHeight();
+        const projected = this.ty + project(vel);
+        if (projected > h * 0.32 || vel > 850) {
+          // Commit dismiss: remove .open and let the observer animate out from
+          // the current position, carrying the release velocity.
+          haptic(9);
+          this._releaseVel = vel;
+          this._close();
+        } else {
+          this.spring = makeSpring({
+            from: this.ty, to: 0, velocity: vel, response: 0.4, bounce: 0.1, precision: 0.5,
+            onUpdate: (val) => { this.ty = val; this._applyPortrait(); },
+            onDone: () => { this.ty = 0; this._applyPortrait(); },
+          });
+        }
+      };
+      this.modal.addEventListener("pointerup", end);
+      this.modal.addEventListener("pointercancel", end);
+    }
+
+    // Trigger the app's own close path (keeps its state cleanup intact).
+    _close() {
+      const id = this.scrim.id;
+      const map = {
+        eventScrim: closeModal, confirmScrim: closeConfirm, completeScrim: closeComplete,
+        reopenScrim: closeReopen, detailScrim: closeDetail, notificationsScrim: closeNotifications,
+      };
+      const fn = map[id];
+      if (fn) fn(); else this.scrim.classList.remove("open");
+    }
+  }
+
+  // ---- Swipe between periods (month view + portrait) --------------------
+  function bindSwipe() {
+    const cal = document.getElementById("calCol");
+    if (!cal) return;
+    let active = false, decided = false, sx = 0, sy = 0, tx = 0, hist = [], w = 0;
+
+    const enabled = () => (typeof currentView === "undefined" ? true : currentView === "month") || portrait();
+
+    cal.addEventListener("pointerdown", (e) => {
+      if (!enabled() || e.pointerType === "mouse" && e.button !== 0) return;
+      active = true; decided = false; sx = e.clientX; sy = e.clientY; tx = 0;
+      w = cal.clientWidth || window.innerWidth;
+      hist = [{ t: performance.now(), x: e.clientX }];
+    });
+    cal.addEventListener("pointermove", (e) => {
+      if (!active) return;
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if (!decided) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        if (Math.abs(dy) > Math.abs(dx)) { active = false; return; } // vertical → let it scroll
+        decided = true;
+        try { cal.setPointerCapture(e.pointerId); } catch (_) {}
+      }
+      tx = dx;
+      hist.push({ t: performance.now(), x: e.clientX });
+      if (hist.length > 6) hist.shift();
+      if (reduce()) return;
+      cal.style.transform = `translateX(${tx}px)`;
+      cal.style.opacity = String(clamp(1 - Math.abs(tx) / (w * 2.2), 0.35, 1));
+    });
+    const finish = (e) => {
+      if (!active) return;
+      active = false;
+      if (!decided) return;
+      try { cal.releasePointerCapture(e.pointerId); } catch (_) {}
+      const a = hist[0], b = hist[hist.length - 1];
+      const dt = b && a ? (b.t - a.t) / 1000 : 0;
+      const vel = dt > 0 ? (b.x - a.x) / dt : 0;
+      const projected = tx + project(vel);
+      const commit = Math.abs(projected) > w * 0.3 || Math.abs(vel) > 500;
+      if (commit && typeof navigate === "function") {
+        const dir = (projected < 0) ? 1 : -1; // swipe left → next period
+        haptic(8);
+        navigate(dir);
+        if (reduce()) { cal.style.transform = ""; cal.style.opacity = ""; return; }
+        // New content slides in from the swipe direction (symmetric path §7),
+        // continuing from where the finger left off, with velocity handoff.
+        const startX = dir === 1 ? (w + tx) : (tx - w);
+        cal.style.transform = `translateX(${startX}px)`;
+        cal.style.opacity = "1";
+        const sp = makeSpring({
+          from: startX, to: 0, velocity: vel, response: 0.44, bounce: 0.08, precision: 0.5,
+          onUpdate: (val) => { cal.style.transform = `translateX(${val}px)`; },
+          onDone: () => { cal.style.transform = ""; },
+        });
+        void sp;
+      } else if (reduce()) {
+        cal.style.transform = ""; cal.style.opacity = "";
+      } else {
+        // Cancelled — spring back with the finger's velocity.
+        makeSpring({
+          from: tx, to: 0, velocity: vel, response: 0.4, bounce: 0.12, precision: 0.5,
+          onUpdate: (val) => { cal.style.transform = `translateX(${val}px)`; cal.style.opacity = String(clamp(1 - Math.abs(val) / (w * 2.2), 0.35, 1)); },
+          onDone: () => { cal.style.transform = ""; cal.style.opacity = ""; },
+        });
+      }
+    };
+    cal.addEventListener("pointerup", finish);
+    cal.addEventListener("pointercancel", finish);
+  }
+
+  function start() {
+    document.body.classList.add("fx-on");
+    document.querySelectorAll(".scrim").forEach((scrim) => new Sheet(scrim));
+    bindSwipe();
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
+  else start();
+})();

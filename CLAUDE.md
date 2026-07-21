@@ -10,6 +10,8 @@ During ClaudeCode, after any changes, find `updates.md` under the project root d
 
 Use UTF-8 encoding. `YYMMDDHHMMSS` is the current timestamp (2-digit year, month, day, hour, minute, second). Write a real, specific description of what changed.
 
+A PostToolUse hook auto-appends a generic `[ClaudeCode][...] file updated` line after every Write/Edit — these are a fallback only, not a substitute for real logging. Before ending a turn (or a coherent chunk of work), delete every generic `file updated` line that the hook appended during that turn/task and replace them with a single specific line summarizing the whole change (what changed, in which files, and why). Never leave generic lines in `updates.md` — they provide no value to future readers and should not accumulate. If a task naturally produces multiple distinct milestones, one specific line per milestone is fine; a wall of `file updated` lines is not.
+
 When the user asks to check updates, read `updates.md` in the project root and summarize it.
 
 ## Project Docs (read before making changes)

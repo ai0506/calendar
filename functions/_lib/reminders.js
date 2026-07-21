@@ -4,6 +4,9 @@ import { nowIso } from "./events.js";
 export const DEFAULT_EVENT_REMINDERS = [60, 10];
 export const ALLOWED_EVENT_REMINDERS = new Set([10, 15, 30, 60, 120, 1440]);
 
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60_000;
+const DEADLINE_DUE_GRACE_MS = 24 * 60 * 60_000;
+
 function own(object, key) {
   return Object.prototype.hasOwnProperty.call(object || {}, key);
 }
@@ -25,6 +28,16 @@ function addShanghaiDays(key, days) {
 
 function shanghaiNine(key) {
   return new Date(`${key}T09:00:00+08:00`);
+}
+
+function shanghaiDateKey(now) {
+  return new Date(now.getTime() + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+function dayDistance(fromKey, toKey) {
+  const from = Date.parse(`${fromKey}T00:00:00Z`);
+  const to = Date.parse(`${toKey}T00:00:00Z`);
+  return Math.round((to - from) / (24 * 60 * 60_000));
 }
 
 function statusFor(scheduledAt, now) {
@@ -160,6 +173,23 @@ function remainingMessage(prefix, targetAt, now) {
   return `${prefix} in ${hours} hour${hours === 1 ? "" : "s"}`;
 }
 
+function deadlineDueMessage(targetAt, now) {
+  const overdueMinutes = Math.floor((now.getTime() - targetAt.getTime()) / 60_000);
+  if (overdueMinutes <= 0) return "Due now";
+  if (overdueMinutes < 60) return `Overdue by ${overdueMinutes} minute${overdueMinutes === 1 ? "" : "s"}`;
+  const overdueHours = Math.floor(overdueMinutes / 60);
+  if (overdueHours < 24) return `Overdue by ${overdueHours} hour${overdueHours === 1 ? "" : "s"}`;
+  const overdueDays = Math.floor(overdueHours / 24);
+  return `Overdue by ${overdueDays} day${overdueDays === 1 ? "" : "s"}`;
+}
+
+function allDayDeadlineMessage(target, now) {
+  const days = dayDistance(shanghaiDateKey(now), dateKey(target.due_time));
+  if (days <= 0) return "Due today";
+  if (days === 1) return "Due tomorrow";
+  return `Due in ${days} days`;
+}
+
 async function targetForReminder(env, reminder) {
   if (reminder.target_type === "event") {
     return queryOne(env.DB, "SELECT * FROM events WHERE id = ?", [reminder.target_id]);
@@ -167,26 +197,45 @@ async function targetForReminder(env, reminder) {
   return queryOne(env.DB, "SELECT * FROM deadlines WHERE id = ?", [reminder.target_id]);
 }
 
-function notificationFor(reminder, target, now) {
+export function notificationFor(reminder, target, now) {
   if (reminder.target_type === "event") {
     if (target.all_day === 1 || target.all_day === true) {
       return { message: "All-day event today", type: "event_all_day" };
     }
     return { message: remainingMessage("Starts", new Date(target.start_time), now), type: reminder.reminder_key.replace(":", "_") };
   }
-  if (reminder.reminder_key === "deadline:due_today") return { message: "Due today", type: "deadline_due_today" };
-  if (reminder.reminder_key === "deadline:due") return { message: "Due now", type: "deadline_due" };
+  if (target.all_day === 1 || target.all_day === true) {
+    return { message: allDayDeadlineMessage(target, now), type: reminder.reminder_key.replace(":", "_") };
+  }
+  if (reminder.reminder_key === "deadline:due") {
+    return { message: deadlineDueMessage(new Date(target.due_time), now), type: "deadline_due" };
+  }
   return { message: remainingMessage("Due", new Date(target.due_time), now), type: reminder.reminder_key.replace(":", "_") };
 }
 
 export function terminalReminderStatus(reminder, target, now = new Date()) {
   if (!target || target.deleted_at) return "cancelled";
   const allDayEvent = target.all_day === 1 || target.all_day === true;
-  if (reminder.target_type === "event" && !allDayEvent && Date.parse(target.start_time) <= now.getTime()) {
-    return "skipped";
+  if (reminder.target_type === "event") {
+    if (allDayEvent) {
+      return dateKey(target.start_time) < shanghaiDateKey(now) ? "skipped" : null;
+    }
+    return Date.parse(target.start_time) <= now.getTime() ? "skipped" : null;
   }
-  // overdue is a display state, not a cancellation state: deadline:due must be able to fire at due_time.
-  if (reminder.target_type === "deadline" && target.completed_at) return "cancelled";
+  if (reminder.target_type === "deadline") {
+    if (target.completed_at) return "cancelled";
+    const allDayDeadline = target.all_day === 1 || target.all_day === true;
+    if (allDayDeadline) {
+      const dueKey = dateKey(target.due_time);
+      const todayKey = shanghaiDateKey(now);
+      if (reminder.reminder_key === "deadline:due_today") return dueKey < todayKey ? "skipped" : null;
+      return dueKey <= todayKey ? "skipped" : null;
+    }
+    const dueAt = Date.parse(target.due_time);
+    if (!Number.isFinite(dueAt)) return "cancelled";
+    if (reminder.reminder_key !== "deadline:due" && dueAt <= now.getTime()) return "skipped";
+    if (reminder.reminder_key === "deadline:due" && now.getTime() - dueAt > DEADLINE_DUE_GRACE_MS) return "skipped";
+  }
   return null;
 }
 

@@ -128,6 +128,9 @@ export async function onRequestPost(context) {
       WHERE series_id = ? AND substr(original_start_time, 1, 10) >= ?`)
       .bind(newSeriesId, now, params.id, body.split_date),
     insertSeriesStatement(env.DB, newSeries),
+    env.DB.prepare(`INSERT INTO event_series_tags (series_id, tag_id, created_at)
+      SELECT ?, tag_id, ? FROM event_series_tags WHERE series_id = ?`)
+      .bind(newSeriesId, now, params.id),
   ];
   if (reminderConfig) {
     statements.push(env.DB.prepare(`INSERT INTO event_series_reminder_configs

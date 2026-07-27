@@ -35,7 +35,13 @@ let ddlPriority = "default";
 let refreshTimer = null;
 let clockTimer = null;
 let refreshInFlight = false;
+let pendingRefresh = false;
 let lastRangeKey = "";
+// Fingerprint of the data currently painted, so a background poll that finds
+// nothing new can skip the (expensive) full grid rebuild.
+let lastDataSignature = "";
+let animationUntil = 0;
+let deferredRenderTimer = null;
 // Each entry caches BOTH events and deadlines for a range: { events, deadlines }.
 // Wider limit so prefetched neighbours (±2 months) aren't evicted before use.
 const rangeCache = new Map();
@@ -221,6 +227,20 @@ function bindEvents() {
   window.addEventListener("resize", () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(render, 120);
+  });
+
+  // Polling a hidden tab burns battery and leaves a backlog of work to run the
+  // moment it comes back. Catch up with one forced refresh instead.
+  document.addEventListener("visibilitychange", () => {
+    if (!els.body.classList.contains("is-authenticated")) return;
+    if (document.hidden) {
+      stopAutoRefresh();
+      stopClockRefresh();
+    } else {
+      startAutoRefresh();
+      startClockRefresh();
+      refreshVisibleData({ silent: true, force: true });
+    }
   });
 }
 
@@ -551,7 +571,7 @@ async function activateNotification(item) {
 
 // Fetch a range's events + deadlines together and (optionally) cache them.
 async function fetchRangeData(range, { store = true } = {}) {
-  const rangeKey = `${range.from}|${range.to}`;
+  const rangeKey = rangeKeyFor(range);
   const eventsUrl = `/api/events?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`;
   const deadlineFrom = addDateKey(range.from.slice(0, 10), -3);
   const deadlineTo = addDateKey(range.to.slice(0, 10), 3);
@@ -565,35 +585,67 @@ async function fetchRangeData(range, { store = true } = {}) {
   return payload;
 }
 
+function rangeKeyFor(range) {
+  return `${range.from}|${range.to}`;
+}
+
+function dataSignature(payload) {
+  return JSON.stringify(payload);
+}
+
+// Instant paint: if we prefetched this period, load it (events AND deadlines)
+// into the in-memory maps right away. Returns true when the caller still needs
+// to render.
+function applyCachedRange() {
+  const rangeKey = rangeKeyFor(getVisibleRange());
+  if (rangeKey === lastRangeKey) return false;
+  const cached = rangeCache.get(rangeKey);
+  if (!cached) return false;
+  applyEvents(cached.events);
+  applyDeadlines(cached.deadlines);
+  lastRangeKey = rangeKey;
+  lastDataSignature = dataSignature(cached);
+  return true;
+}
+
 async function refreshVisibleData({ silent = true, force = false } = {}) {
-  if (refreshInFlight) return;
+  // Don't drop the request: navigating during an in-flight poll used to leave
+  // the new period unfetched until the next timer tick.
+  if (refreshInFlight) { pendingRefresh = true; return; }
   const range = getVisibleRange();
-  const rangeKey = `${range.from}|${range.to}`;
+  const rangeKey = rangeKeyFor(range);
   if (!force && rangeKey === lastRangeKey && !silent) return;
 
-  // Instant paint: if we prefetched this month, render it fully (events AND
-  // deadlines) right away, then quietly refresh underneath.
-  const cached = rangeCache.get(rangeKey);
-  if (cached && rangeKey !== lastRangeKey) {
-    applyEvents(cached.events);
-    applyDeadlines(cached.deadlines);
-    lastRangeKey = rangeKey;
-    render();
-  }
+  if (applyCachedRange()) render();
 
   refreshInFlight = true;
   try {
     const payload = await fetchRangeData(range, { store: true });
-    applyEvents(payload.events);
-    applyDeadlines(payload.deadlines);
-    lastRangeKey = rangeKey;
-    render();
+    // The user may have navigated while this was in flight. The payload stays
+    // cached for when they come back, but painting it now would show the
+    // wrong period.
+    if (rangeKeyFor(getVisibleRange()) === rangeKey) {
+      const signature = dataSignature(payload);
+      const changed = signature !== lastDataSignature || rangeKey !== lastRangeKey;
+      applyEvents(payload.events);
+      applyDeadlines(payload.deadlines);
+      lastRangeKey = rangeKey;
+      lastDataSignature = signature;
+      // Rebuilding the grid every 10s is what makes swipes and sheets stutter
+      // once a month holds a few hundred items. Only repaint on real changes.
+      if (changed) render();
+    }
     prefetchAdjacentRanges();
   } catch (err) {
     if (err.message !== "Authentication required" && silent) showToast("Sync failed. Keeping current calendar.");
     if (!silent && err.message !== "Authentication required") showToast(err.message || "Failed to load events.");
   } finally {
     refreshInFlight = false;
+  }
+
+  if (pendingRefresh) {
+    pendingRefresh = false;
+    refreshVisibleData({ silent: true, force: true });
   }
 }
 
@@ -619,7 +671,7 @@ async function prefetchAdjacentRanges() {
   }
   await Promise.all(dates.map((date) => {
     const range = computeRange(date, view, portraitMode);
-    if (rangeCache.has(`${range.from}|${range.to}`)) return null;
+    if (rangeCache.has(rangeKeyFor(range))) return null;
     return fetchRangeData(range, { store: true }).catch(() => null);
   }));
 }
@@ -726,6 +778,7 @@ function switchView(view) {
   if (!["month", "week", "day"].includes(view)) return;
   currentView = view;
   updateViewToggle();
+  applyCachedRange();
   render();
   refreshVisibleData({ silent: false, force: true });
 }
@@ -734,6 +787,9 @@ function navigate(dir) {
   if (isPortrait() || currentView === "month") viewDate = addMonths(viewDate, dir);
   else if (currentView === "week") viewDate = addDays(viewDate, dir * 7);
   else viewDate = addDays(viewDate, dir);
+  // Load the prefetched period before painting, so this is the only rebuild:
+  // rendering first and then again on cache hit meant two full grids per step.
+  applyCachedRange();
   render();
   refreshVisibleData({ silent: false, force: true });
 }
@@ -741,6 +797,7 @@ function navigate(dir) {
 function goToday() {
   viewDate = startOfDay(new Date());
   selectedDate = startOfDay(new Date());
+  applyCachedRange();
   render();
   refreshVisibleData({ silent: false, force: true });
 }
@@ -750,7 +807,21 @@ function renderEmptyShell() {
   render();
 }
 
+// The FX layer marks the window in which a swipe or sheet spring is running.
+// A full grid rebuild mid-flight drops frames, so renders wait it out.
+function holdRenders(ms) {
+  animationUntil = Math.max(animationUntil, performance.now() + ms);
+}
+
 function render() {
+  const wait = animationUntil - performance.now();
+  if (wait > 0) {
+    if (!deferredRenderTimer) {
+      deferredRenderTimer = setTimeout(() => { deferredRenderTimer = null; render(); }, wait + 16);
+    }
+    return;
+  }
+  if (deferredRenderTimer) { clearTimeout(deferredRenderTimer); deferredRenderTimer = null; }
   updateViewToggle();
   if (isPortrait()) {
     renderPortrait();
@@ -855,11 +926,34 @@ function renderPortraitDetail() {
   bindInspectorActions(els.inspector);
 }
 
+// Upper bound on the chips that can fit in one month cell at the current size,
+// measured from the grid already on screen. Building the ones that cannot fit
+// only for trimMonthCells to hide them is pure layout cost, and layout is what
+// dominates a render once a month holds a few hundred items.
+function measureChipCapacity() {
+  const cell = els.calCol.querySelector(".month-grid .cell");
+  if (!cell) return 0;
+  let chipHeight = Infinity;
+  for (const chip of els.calCol.querySelectorAll(".month-grid .event-chip, .month-grid .ddl-chip")) {
+    const height = chip.offsetHeight;
+    if (height > 0 && height < chipHeight) chipHeight = height;
+  }
+  if (!Number.isFinite(chipHeight)) return 0;
+  const top = cell.querySelector(".cell-top");
+  const styles = getComputedStyle(cell);
+  const available = cell.clientHeight - (top?.offsetHeight || 0) - parseFloat(styles.paddingTop) - parseFloat(styles.paddingBottom) - 4;
+  // Deliberately generous (smallest chip height, rounded up, plus one) so the
+  // cap never drops a chip that would have fit — trimMonthCells still does the
+  // exact per-cell fit on what we build.
+  return Math.max(1, Math.ceil(available / (chipHeight + 3)) + 1);
+}
+
 function renderMonth() {
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
   const { start } = getMonthGridRange(viewDate);
   els.navTitle.textContent = viewDate.toLocaleString("en-US", { month: "long", year: "numeric" });
+  const capacity = measureChipCapacity();
   let cells = "";
   for (let i = 0; i < 42; i++) {
     const date = addDays(start, i);
@@ -867,17 +961,17 @@ function renderMonth() {
     const events = sortEvents(getEventsFor(date));
     const deadlines = getDeadlinesFor(date);
     const items = [...deadlines.map((deadline) => ({ type: "deadline", value: deadline })), ...events.map((event) => ({ type: "event", value: event }))];
-    const shown = items;
-    const more = 0;
+    // Chips dropped here still get counted into the cell's "+N more".
+    const dropped = capacity ? Math.max(0, items.length - capacity) : 0;
+    const shown = dropped ? items.slice(0, capacity) : items;
     cells += `<div class="cell ${date.getMonth() !== month ? "other-month" : ""} ${sameDay(date, today()) ? "is-today" : ""} ${sameDay(date, selectedDate) ? "is-selected" : ""}" data-date="${iso}">
       <div class="cell-top">
         <span class="date-num">${date.getDate()}</span>
       </div>
-      <div class="events">
+      <div class="events" data-dropped="${dropped}">
         ${shown.map((item) => item.type === "deadline"
           ? `<div class="ddl-chip ${item.value.status === "completed" ? "done" : item.value.status}" style="--ddl-color:${deadlineColor(item.value)};--ddl-bg:${item.value.bg}" data-deadline-id="${escapeAttr(item.value.id)}" title="${escapeAttr(item.value.title)}">⚑ ${escapeHtml(item.value.title)}</div>`
           : `<div class="event-chip ${isOngoing(item.value, date) ? "ongoing" : ""}" style="background:${item.value.bg}; color:${inkColor(item.value.color)}" data-open-day="${iso}">${eventTitleHTML(item.value)}</div>`).join("")}
-        ${more > 0 ? `<div class="more-link">+${more} more</div>` : ""}
       </div>
     </div>`;
   }
@@ -889,36 +983,53 @@ function renderMonth() {
   trimMonthCells();
 }
 
+// Hide the chips that don't fit and add a "+N more" button. Done in three
+// batched passes (write / read / write) instead of per cell: interleaving a
+// style write with an offsetHeight read forces a synchronous reflow, and 42 of
+// those over a grid holding hundreds of chips is what makes navigation crawl.
 function trimMonthCells() {
-  els.calCol.querySelectorAll(".month-grid .cell").forEach((cell) => {
+  const cells = [...els.calCol.querySelectorAll(".month-grid .cell")];
+  const entries = [];
+  for (const cell of cells) {
     const events = cell.querySelector(".events");
-    if (!events) return;
+    if (!events) continue;
     const items = [...events.querySelectorAll(".event-chip,.ddl-chip")];
-    items.forEach((item) => { item.style.display = ""; });
-    const top = cell.querySelector(".cell-top");
-    const styles = getComputedStyle(cell);
-    const available = cell.clientHeight - (top?.offsetHeight || 0) - parseFloat(styles.paddingTop) - parseFloat(styles.paddingBottom) - 4;
-    const moreHeight = 15;
+    // Only write when a previous pass actually hid something; a no-op write
+    // would still invalidate layout for the read pass below.
+    for (const item of items) if (item.style.display) item.style.display = "";
+    const dropped = Number(events.dataset.dropped) || 0;
+    entries.push({ cell, events, items, dropped, top: cell.querySelector(".cell-top"), show: items.length });
+  }
+  if (!entries.length) return;
+
+  // Every cell shares the same padding, so resolve it once.
+  const styles = getComputedStyle(entries[0].cell);
+  const padding = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+  const moreHeight = 15;
+  for (const entry of entries) {
+    const available = entry.cell.clientHeight - (entry.top?.offsetHeight || 0) - padding - 4;
     let used = 0;
-    let show = items.length;
-    for (let i = 0; i < items.length; i += 1) {
-      const height = items[i].offsetHeight + 3;
-      if (used + height + moreHeight > available) { show = i; break; }
+    for (let i = 0; i < entry.items.length; i += 1) {
+      const height = entry.items[i].offsetHeight + 3;
+      if (used + height + moreHeight > available) { entry.show = i; break; }
       used += height;
     }
-    if (show >= items.length) return;
-    if (show < 1) show = 1;
-    items.slice(show).forEach((item) => { item.style.display = "none"; });
+  }
+
+  for (const entry of entries) {
+    if (entry.show >= entry.items.length && !entry.dropped) continue;
+    const show = Math.max(Math.min(entry.show, entry.items.length), 1);
+    for (const item of entry.items.slice(show)) item.style.display = "none";
     const more = document.createElement("button");
     more.type = "button";
     more.className = "more-link";
-    more.textContent = `+${items.length - show} more`;
+    more.textContent = `+${entry.items.length - show + entry.dropped} more`;
     more.addEventListener("click", (event) => {
       event.stopPropagation();
-      openDayPopover(cell.dataset.date, more);
+      openDayPopover(entry.cell.dataset.date, more);
     });
-    events.appendChild(more);
-  });
+    entry.events.appendChild(more);
+  }
 }
 
 function bindCalendarDeadlineActions(root) {
@@ -2222,6 +2333,12 @@ function setLoading(isLoading) {
     if (navigator.vibrate) { try { navigator.vibrate(ms); } catch (_) {} }
   }
 
+  // Ask the app to hold off on rebuilding the calendar while a spring runs —
+  // a mid-flight rebuild of a busy month costs enough frames to be visible.
+  function hold(ms) {
+    if (typeof holdRenders === "function") holdRenders(ms);
+  }
+
   // Apple's momentum projection (exponential decay, not v²/2a). Section 6.
   function project(velocity, decel = 0.998) {
     return (velocity / 1000) * decel / (1 - decel);
@@ -2332,6 +2449,7 @@ function setLoading(isLoading) {
 
     present() {
       if (this.spring) this.spring.stop();
+      hold(420);
       if (reduce()) { this._fade(1); return; }
       if (portrait()) {
         const h = this._measureSheetHeight();
@@ -2354,6 +2472,7 @@ function setLoading(isLoading) {
 
     dismiss(releaseVel) {
       if (this.spring) this.spring.stop();
+      hold(420);
       if (reduce()) { this._fade(0); return; }
       if (portrait()) {
         const h = this._measureSheetHeight();
@@ -2498,6 +2617,9 @@ function setLoading(isLoading) {
         haptic(8);
         navigate(dir);
         if (reduce()) { cal.style.transform = ""; cal.style.opacity = ""; return; }
+        // navigate() has already painted the new period; keep the slide-in
+        // clear of the background refresh that follows it.
+        hold(600);
         // New content slides in from the swipe direction (symmetric path §7),
         // continuing from where the finger left off, with velocity handoff.
         const startX = dir === 1 ? (w + tx) : (tx - w);
@@ -2513,6 +2635,7 @@ function setLoading(isLoading) {
         cal.style.transform = ""; cal.style.opacity = "";
       } else {
         // Cancelled — spring back with the finger's velocity.
+        hold(500);
         makeSpring({
           from: tx, to: 0, velocity: vel, response: 0.4, bounce: 0.12, precision: 0.5,
           onUpdate: (val) => { cal.style.transform = `translateX(${val}px)`; cal.style.opacity = String(clamp(1 - Math.abs(val) / (w * 2.2), 0.35, 1)); },

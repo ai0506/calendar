@@ -13,6 +13,7 @@ import {
 } from "../../_lib/events.js";
 import { configStatement, effectiveEventReminders, eventReminderStatements, requestedReminders } from "../../_lib/reminders.js";
 import { attachTagsToEvents, ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../../_lib/tags.js";
+import { ensureCategoryExists } from "../../_lib/categories.js";
 
 // GET /api/events?from=&to=&category=
 export async function onRequestGet(context) {
@@ -72,6 +73,8 @@ export async function onRequestPost(context) {
   if (msg) return error("validation_error", msg, 400);
   const temporalMsg = validateEventTemporalOrder(body);
   if (temporalMsg) return error("validation_error", temporalMsg, 400);
+  const categoryMessage = await ensureCategoryExists(env, body.category);
+  if (categoryMessage) return error("validation_error", categoryMessage, 400);
   const reminderRequest = requestedReminders(body, toIntBool(body.all_day) === 1);
   if (reminderRequest.error) return error("validation_error", reminderRequest.error, 400);
   const tagMessage = body.tag_ids === undefined ? null : validateTagIds(body.tag_ids);

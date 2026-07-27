@@ -14,6 +14,7 @@ import {
 import { nowIso } from "../../_lib/events.js";
 import { deadlineReminderStatements } from "../../_lib/reminders.js";
 import { attachTagsToDeadlines, ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../../_lib/tags.js";
+import { ensureCategoryExists } from "../../_lib/categories.js";
 
 function isUniqueConflict(err) {
   return /UNIQUE constraint failed|unique/i.test(String(err?.message || err));
@@ -61,6 +62,8 @@ export async function onRequestPost(context) {
   const body = await request.json().catch(() => null);
   const message = validateDeadlineInput(body, true);
   if (message) return error("validation_error", message, 400);
+  const categoryMessage = await ensureCategoryExists(env, body.category);
+  if (categoryMessage) return error("validation_error", categoryMessage, 400);
   const tagMessage = body.tag_ids === undefined ? null : validateTagIds(body.tag_ids);
   if (tagMessage) return error("validation_error", tagMessage, 400);
   if (body.tag_ids !== undefined) {

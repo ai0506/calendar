@@ -17,6 +17,7 @@ import {
   requestedReminders,
 } from "../../_lib/reminders.js";
 import { ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../../_lib/tags.js";
+import { ensureCategoryExists } from "../../_lib/categories.js";
 
 async function getActiveSeries(env, id) {
   return queryOne(
@@ -95,6 +96,8 @@ export async function onRequestPatch(context) {
   if (temporalMessage) return error("validation_error", temporalMessage, 400);
   const recurrenceMessage = validateRecurringRequest(merged);
   if (recurrenceMessage) return error("validation_error", recurrenceMessage, 400);
+  const categoryMessage = await ensureCategoryExists(env, merged.category);
+  if (categoryMessage) return error("validation_error", categoryMessage, 400);
   const reminderRequest = requestedReminders(body, merged.all_day === true || merged.all_day === 1);
   if (reminderRequest.error) return error("validation_error", reminderRequest.error, 400);
   const tagMessage = body.tag_ids === undefined ? null : validateTagIds(body.tag_ids);

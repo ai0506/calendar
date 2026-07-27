@@ -54,6 +54,19 @@ Phase 1 核心功能已完成：认证、events CRUD、categories、import、exp
 - 实际行为：修复前会重弹历史未读，过期全天 Event 可能仍显示 today，Deadline 多阶段提醒可能集中出现，点击只标记已读。
 - 备注 / 修复：首次轮询建立历史基线；加入 Event/Deadline 过期规则和 due 24 小时宽限；权限改为显式开启；通知点击会标已读并定位目标。
 
+### [BUG-0005] category 字段无合法性校验，AI Agent 可凭空写入未注册分类名
+- 状态：Fixed
+- 严重程度：Medium
+- 发现日期：2026-07-27
+- 影响：Event / Deadline / Event Series 写入路径（REST 与 MCP）
+- 复现步骤：
+  1. 通过 `calendar_create_event`（或任意写入端点）传入一个不在 `categories` 表中的 `category` 值，例如 `"UXR课程"`
+  2. 请求成功创建/更新，事件被写入这个自造分类名
+  3. 该事件在按分类过滤、分类默认配色等场景下匹配不到任何 `categories` 行
+- 期望行为：`category` 应视为对 `categories.name` 的引用，非法值应在写入前被拒绝。
+- 实际行为：`category` 此前只做「是字符串」的校验，未检查是否已注册；生产库中已有一条这样的脏数据（事件 `1ebae044-663e-41bb-beea-c1320d57593d`，UXR课程加课），已手动改回 `Research`。
+- 备注 / 修复：新增 `functions/_lib/categories.js` 的 `ensureCategoryExists`，接入全部 9 个写路径（events POST/PUT、events/import、event-series POST/PATCH、deadlines POST/PUT，以及对应的 6 个 MCP 工具）；非法分类名统一返回 `validation_error`（import 中计入 `skipped`）。MCP 的 `category` 字段描述同步更新，提示需先用 `calendar_list_categories` 核对合法值。
+
 ## 模板
 
 ```

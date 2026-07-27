@@ -15,6 +15,7 @@ import {
 import { nowIso } from "../../_lib/events.js";
 import { cancelTargetStatement, deadlineReminderStatements } from "../../_lib/reminders.js";
 import { ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../../_lib/tags.js";
+import { ensureCategoryExists } from "../../_lib/categories.js";
 
 export async function onRequestGet(context) {
   const row = await activeDeadline(context.env, context.params.id);
@@ -44,6 +45,8 @@ export async function onRequestPut(context) {
   const merged = { ...existing, ...body };
   const message = validateDeadlineInput(merged, true);
   if (message) return error("validation_error", message, 400);
+  const categoryMessage = await ensureCategoryExists(env, merged.category);
+  if (categoryMessage) return error("validation_error", categoryMessage, 400);
   const input = normalizeDeadlineInput(body);
   const sets = [];
   const values = [];

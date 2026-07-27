@@ -18,6 +18,7 @@
 
 import { queryAll, queryOne, run, batch } from "../_lib/db.js";
 import { attachTagsToDeadlines, attachTagsToEvents, ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../_lib/tags.js";
+import { ensureCategoryExists } from "../_lib/categories.js";
 import { safeEqual } from "../_lib/auth.js";
 import {
   verifyAccessToken,
@@ -109,6 +110,13 @@ const UPDATABLE = [
 
 // --- 工具定义 -------------------------------------------------------------
 
+// category 必须引用 categories 表中已存在的名字（外键式约束由服务端校验，非法值返回 validation_error）。
+// MCP 未提供创建分类的工具，调用前应先 calendar_list_categories 确认可用名字，不要凭空编造。
+const CATEGORY_DESCRIPTION =
+  "分类名（可选）。必须是 calendar_list_categories 返回的已存在分类之一，如 Physics；" +
+  "传入未注册的分类名会被拒绝（validation_error）。MCP 没有创建分类的工具，" +
+  "确实需要新分类时请先用 calendar_list_categories 确认没有再匹配的，再让用户通过网页端 POST /api/categories 创建。";
+
 const EVENT_WRITE_PROPERTIES = {
   title: { type: "string", description: "标题" },
   description: { type: "string", description: "描述（可选）" },
@@ -118,7 +126,7 @@ const EVENT_WRITE_PROPERTIES = {
   },
   end_time: { type: "string", description: "结束时间，ISO 8601 带时区偏移（可选）" },
   all_day: { type: "boolean", description: "是否全天事件（可选，默认 false）" },
-  category: { type: "string", description: "分类名，如 Physics（可选）" },
+  category: { type: "string", description: CATEGORY_DESCRIPTION },
   color: {
     type: "string",
     description:
@@ -138,7 +146,7 @@ const DEADLINE_WRITE_PROPERTIES = {
   description: { type: "string", description: "描述（可选）" },
   due_time: { type: "string", description: "截止日期 YYYY-MM-DD，或带时区的 ISO 8601 时间" },
   all_day: { type: "boolean", description: "是否全天截止事项；全天时 due_time 必须为 YYYY-MM-DD" },
-  category: { type: "string", description: "分类名（可选）" },
+  category: { type: "string", description: CATEGORY_DESCRIPTION },
   color: { type: "string", description: "六位 hex 颜色、default 或 null（可选）" },
   group_title: { type: "string", description: "分组标题（可选）" },
   priority: { type: "string", enum: ["high", "default", "low"], description: "重要程度，默认 default" },
@@ -512,6 +520,7 @@ async function runListDeadlines(env, args = {}) {
 
 async function runCreateDeadline(env, args = {}) {
   const message = validateDeadlineInput(args, true); if (message) throw new Error(message);
+  const categoryMessage = await ensureCategoryExists(env, args.category); if (categoryMessage) throw new Error(categoryMessage);
   if (args.tag_ids !== undefined) { const tagMessage = validateTagIds(args.tag_ids); if (tagMessage) throw new Error(tagMessage); const exists = await ensureTagIdsExist(env, args.tag_ids); if (exists) throw new Error(exists); }
   const input = normalizeDeadlineInput(args); const now = nowIso();
   const deadline = { id: crypto.randomUUID(), title: input.title.trim(), description: input.description ?? null, due_time: input.due_time, all_day: input.all_day === 1 ? 1 : 0, category: input.category ?? null, color: input.color ?? null, group_title: input.group_title ?? null, priority: input.priority || "default", source: input.source || "mcp", external_id: input.external_id ?? null, created_at: now, updated_at: now, completed_at: null, deleted_at: null };
@@ -540,7 +549,9 @@ async function runUpdateDeadline(env, args = {}) {
   if (args.source !== undefined || args.external_id !== undefined) throw new Error("source and external_id cannot be modified");
   const body = { ...args }; delete body.id;
   if (body.tag_ids !== undefined) { const tagMessage = validateTagIds(body.tag_ids); if (tagMessage) throw new Error(tagMessage); const exists = await ensureTagIdsExist(env, body.tag_ids); if (exists) throw new Error(exists); }
-  const message = validateDeadlineInput({ ...existing, ...body }, true); if (message) throw new Error(message);
+  const mergedDeadline = { ...existing, ...body };
+  const message = validateDeadlineInput(mergedDeadline, true); if (message) throw new Error(message);
+  const categoryMessage = await ensureCategoryExists(env, mergedDeadline.category); if (categoryMessage) throw new Error(categoryMessage);
   const input = normalizeDeadlineInput(body); const sets = []; const values = [];
   for (const field of deadlineFields()) { if (field === "source" || field === "external_id" || input[field] === undefined) continue; sets.push(`${field} = ?`); values.push(field === "all_day" ? input[field] : field === "title" ? input[field].trim() : input[field]); }
   const now = nowIso();
@@ -621,6 +632,8 @@ async function runCreateEvent(env, args = {}) {
   if (msg) throw new Error(msg);
   const temporalMsg = validateEventTemporalOrder(args);
   if (temporalMsg) throw new Error(temporalMsg);
+  const categoryMessage = await ensureCategoryExists(env, args.category);
+  if (categoryMessage) throw new Error(categoryMessage);
   const reminderRequest = requestedReminders(args, toIntBool(args.all_day) === 1);
   if (reminderRequest.error) throw new Error(reminderRequest.error);
   if (args.tag_ids !== undefined) { const tagMessage = validateTagIds(args.tag_ids); if (tagMessage) throw new Error(tagMessage); const exists = await ensureTagIdsExist(env, args.tag_ids); if (exists) throw new Error(exists); }
@@ -685,6 +698,8 @@ async function runUpdateEvent(env, args = {}) {
   if (msg) throw new Error(msg);
   const temporalMsg = validateEventTemporalOrder({ ...existing, ...body });
   if (temporalMsg) throw new Error(temporalMsg);
+  const categoryMessage = await ensureCategoryExists(env, body.category);
+  if (categoryMessage) throw new Error(categoryMessage);
   const mergedAllDay = body.all_day === undefined ? existing.all_day : toIntBool(body.all_day);
   const reminderRequest = requestedReminders(body, mergedAllDay === 1);
   if (reminderRequest.error) throw new Error(reminderRequest.error);
@@ -807,6 +822,8 @@ async function runCreateEventSeries(env, args = {}) {
   if (eventMessage) throw new Error(eventMessage);
   const recurrenceMessage = validateRecurringRequest(body);
   if (recurrenceMessage) throw new Error(recurrenceMessage);
+  const categoryMessage = await ensureCategoryExists(env, body.category);
+  if (categoryMessage) throw new Error(categoryMessage);
 
   let instances;
   try {
@@ -880,6 +897,8 @@ async function runUpdateEventSeries(env, args = {}) {
   if (temporalMessage) throw new Error(temporalMessage);
   const recurrenceMessage = validateRecurringRequest(merged);
   if (recurrenceMessage) throw new Error(recurrenceMessage);
+  const categoryMessage = await ensureCategoryExists(env, merged.category);
+  if (categoryMessage) throw new Error(categoryMessage);
 
   let instances;
   try {

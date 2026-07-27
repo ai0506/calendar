@@ -54,6 +54,10 @@
 - [x] `GET /api/categories` 返回 8 个种子分类，颜色各异
 - [x] `POST /api/categories` 创建新分类 → 201
 - [x] 重复分类名 → 409
+- [x] 未注册的 `category` 会被以下写路径拒绝为 `validation_error`：`POST/PUT /api/events`、`POST /api/event-series`、`PATCH /api/event-series/:id`、`POST/PUT /api/deadlines`，以及 MCP 的 `calendar_create_event`/`calendar_update_event`/`calendar_create_event_series`/`calendar_update_event_series`/`calendar_create_deadline`/`calendar_update_deadline`
+- [x] `POST /api/events/import` 中单条事件 `category` 非法时计入 `skipped`，不影响批次其余条目
+- [x] `category` 留空 / `null` 不触发校验（清空分类仍被允许）
+- [ ] 生产环境针对未注册 `category` 的端到端冒烟验证（本地 `node --check` 与单元测试已过，尚未过真实 D1 联调）
 
 ## 批量导入 (Import)
 - [x] `POST /api/events/import` 首次导入 → created 计数正确

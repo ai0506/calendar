@@ -20,6 +20,7 @@ import {
   requestedReminders,
 } from "../../_lib/reminders.js";
 import { ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../../_lib/tags.js";
+import { ensureCategoryExists } from "../../_lib/categories.js";
 
 // 可被 PUT 更新的字段（id / created_at 不可改）
 const UPDATABLE = [
@@ -81,6 +82,8 @@ export async function onRequestPut(context) {
 
   const temporalMsg = validateEventTemporalOrder({ ...existing, ...body });
   if (temporalMsg) return error("validation_error", temporalMsg, 400);
+  const categoryMessage = await ensureCategoryExists(env, body.category);
+  if (categoryMessage) return error("validation_error", categoryMessage, 400);
   const mergedAllDay = body.all_day === undefined ? existing.all_day : toIntBool(body.all_day);
   const reminderRequest = requestedReminders(body, mergedAllDay === 1);
   if (reminderRequest.error) return error("validation_error", reminderRequest.error, 400);

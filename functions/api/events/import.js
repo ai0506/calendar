@@ -14,6 +14,7 @@ import {
   requestedReminders,
 } from "../../_lib/reminders.js";
 import { ensureTagIdsExist, replaceTagStatements, validateTagIds } from "../../_lib/tags.js";
+import { ensureCategoryExists } from "../../_lib/categories.js";
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -48,6 +49,7 @@ export async function onRequestPost(context) {
     const tagMessage = item.tag_ids === undefined ? null : validateTagIds(item.tag_ids);
     if (tagMessage) { skipped++; continue; }
     if (item.tag_ids !== undefined && await ensureTagIdsExist(env, item.tag_ids)) { skipped++; continue; }
+    if (await ensureCategoryExists(env, item.category)) { skipped++; continue; }
 
     const source = item.source ?? "web";
     const externalId = item.external_id ?? null;

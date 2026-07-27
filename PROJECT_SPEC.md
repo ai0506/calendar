@@ -76,7 +76,7 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 | start_time | TEXT NOT NULL | 开始时间，ISO 8601 带时区偏移 |
 | end_time | TEXT | 结束时间，ISO 8601 带时区偏移 |
 | all_day | INTEGER | 全天事件标记，0/1 |
-| category | TEXT | 分类名称 |
+| category | TEXT | 分类名称；必须是 `categories.name` 中已存在的值，服务端在写入前校验（非法值返回 `validation_error`），不允许调用方凭空创建分类名 |
 | color | TEXT | 颜色（覆盖分类默认色，可选） |
 | group_title | TEXT | 分组标题（未来合并显示课程用） |
 | source | TEXT | 来源，默认 `web`（`web` / `agent` / `import` 等） |
@@ -103,6 +103,8 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 | created_at | TEXT | 创建时间 |
 
 种子分类：Math / Physics / CS / Other Subjects / Research / Projects / Leisure / Tech，各配不同颜色。分类系统保持简单，方便以后扩展。
+
+`category` 字段没有数据库外键约束，但 Event / Deadline / Event Series 的所有写路径（REST 与 MCP）都会在写入前校验 `category` 是否存在于 `categories.name`，防止调用方（尤其是 AI Agent）凭空写入未注册的分类名。新增分类只能通过 `POST /api/categories`（暂无对应 MCP 工具）；Agent 应先用 `calendar_list_categories` 确认没有合适的现有分类，再请用户通过网页端创建。
 
 ### event_series
 

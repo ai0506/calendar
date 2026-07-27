@@ -312,6 +312,8 @@ Idempotency-Key: <operation-uuid>
 成功：`201`，返回创建的分类对象。
 名称重复：`409`，`{ "ok": false, "error": { "code": "conflict", "message": "..." } }`。
 
+**`category` 字段的合法性校验**：Event（含批量导入）、Event Series、Deadline 的创建/修改端点（REST 与 MCP 均一致）在写入前都会检查传入的 `category` 是否已存在于本表；不存在则返回 `400 validation_error`（批量导入 `POST /api/events/import` 中单条 `category` 非法则计入 `skipped`，不影响整批）。这里没有数据库外键，是应用层强制的约束，用于防止调用方（尤其 AI Agent）凭空发明分类名。新增分类目前只能通过本端点（暂无对应 MCP 工具）；`category` 留空或为 `null` 则不做校验。
+
 ---
 
 ### 导出 (Export) — ✅ 已实现 (Stage 6)

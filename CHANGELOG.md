@@ -12,6 +12,9 @@
 ### Changed
 - MCP 工具名统一加 `calendar_` 前缀（如 `calendar_list_events`），避免与同时挂载的其他 MCP server（Cloudflare 等）工具混淆。旧的无前缀工具名仍被服务端接受并透明映射，`tools/list` 只暴露新名。
 
+### Fixed
+- Event / Deadline / Event Series 的所有写路径（REST 与 MCP）现在会校验 `category` 是否已存在于 `categories` 表，非法分类名统一返回 `validation_error`（批量导入中计入 `skipped`）。此前 `category` 无任何约束，AI Agent 曾借此凭空写入一个未注册的分类名（`UXR课程`），导致该事件无法匹配任何 `categories` 行、拿不到分类颜色。见 `BUGS.md` BUG-0005。
+
 ### 计划中
 - Android / Flutter App
 - 完整浏览器端到端测试与生产部署验收

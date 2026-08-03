@@ -37,8 +37,11 @@ async function parseBody(request) {
 const get = (b, k) => (b instanceof Map ? b.get(k) : b.get(k)) || "";
 
 async function issueTokens(env, request, { clientId, resource, scope, userSub }) {
+  // client_name 由客户端 DCR 注册时自报，随 access token 签发进去，
+  // 避免 /mcp 每次请求都要查 oauth_clients 才能知道是哪个 AI 在写入。
+  const client = await queryOne(env.DB, "SELECT client_name FROM oauth_clients WHERE client_id = ?", [clientId]);
   const accessToken = await signAccessToken(
-    { sub: userSub, aud: resource, scope, client_id: clientId },
+    { sub: userSub, aud: resource, scope, client_id: clientId, client_name: client?.client_name || null },
     env.SESSION_SECRET,
     ACCESS_TOKEN_TTL,
   );

@@ -25,6 +25,7 @@ import {
   canonicalResource,
   normalizeResource,
   originOf,
+  READ_SCOPE,
 } from "../_lib/oauth.js";
 import {
   isValidIso,
@@ -455,6 +456,9 @@ const TOOLS = [
   },
 ];
 
+// calendar.read token 只可发现和执行明确标记为只读的 MCP 工具。
+const READ_ONLY_TOOLS = TOOLS.filter((tool) => tool.annotations?.readOnlyHint);
+
 // --- 只读工具实现 ----------------------------------------------------------
 
 // 复用与 GET /api/events 相同的查询逻辑（直接查 D1，不经过 HTTP）。
@@ -518,7 +522,7 @@ async function runListDeadlines(env, args = {}) {
   return (await attachTagsToDeadlines(env, await queryAll(env.DB, sql, params), whereSql, params)).map(rowToDeadline);
 }
 
-async function runCreateDeadline(env, args = {}) {
+async function runCreateDeadline(env, args = {}, clientName = null) {
   const message = validateDeadlineInput(args, true); if (message) throw new Error(message);
   const categoryMessage = await ensureCategoryExists(env, args.category); if (categoryMessage) throw new Error(categoryMessage);
   if (args.tag_ids !== undefined) { const tagMessage = validateTagIds(args.tag_ids); if (tagMessage) throw new Error(tagMessage); const exists = await ensureTagIdsExist(env, args.tag_ids); if (exists) throw new Error(exists); }
@@ -528,10 +532,11 @@ async function runCreateDeadline(env, args = {}) {
     env.DB.prepare("INSERT INTO deadlines (id, title, description, due_time, all_day, category, color, group_title, priority, source, external_id, created_at, updated_at, completed_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(...Object.values(deadline)),
     ...deadlineReminderStatements(env.DB, deadline),
+    attributionStatement(env.DB, "deadlines", deadline.id, clientName),
   ];
   if (args.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "deadline_tags", "deadline_id", deadline.id, args.tag_ids, now));
   await batch(env.DB, statements);
-  return { ...rowToDeadline(deadline), tags: [] };
+  return { ...rowToDeadline(deadline), tags: [], last_modified_by: clientName };
 }
 
 async function runListTags(env) {
@@ -543,7 +548,7 @@ async function runGetDeadline(env, args = {}) {
   const row = await activeDeadline(env, args.id); if (!row) throw new Error("Deadline not found"); return { ...rowToDeadline(row), tags: await tagsForOwner(env, "deadline_tags", "deadline_id", row.id) };
 }
 
-async function runUpdateDeadline(env, args = {}) {
+async function runUpdateDeadline(env, args = {}, clientName = null) {
   if (typeof args.id !== "string" || args.id.trim() === "") throw new Error("id is required");
   const existing = await activeDeadline(env, args.id); if (!existing) throw new Error("Deadline not found");
   if (args.source !== undefined || args.external_id !== undefined) throw new Error("source and external_id cannot be modified");
@@ -566,6 +571,7 @@ async function runUpdateDeadline(env, args = {}) {
   };
   const statements = [
     env.DB.prepare(`UPDATE deadlines SET ${sets.join(", ")} WHERE id = ? AND deleted_at IS NULL`).bind(...values),
+    attributionStatement(env.DB, "deadlines", args.id, clientName),
   ];
   if (needsReplan) {
     statements.push(cancelTargetStatement(env.DB, "deadline", args.id, now));
@@ -577,24 +583,26 @@ async function runUpdateDeadline(env, args = {}) {
   return { ...rowToDeadline(updated), tags: await tagsForOwner(env, "deadline_tags", "deadline_id", args.id) };
 }
 
-async function runDeleteDeadline(env, args = {}) {
+async function runDeleteDeadline(env, args = {}, clientName = null) {
   if (typeof args.id !== "string" || args.id.trim() === "") throw new Error("id is required");
   const now = nowIso();
   const existing = await activeDeadline(env, args.id); if (!existing) throw new Error("Deadline not found");
   await batch(env.DB, [
     env.DB.prepare("UPDATE deadlines SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL").bind(now, now, args.id),
     cancelTargetStatement(env.DB, "deadline", args.id, now),
+    attributionStatement(env.DB, "deadlines", args.id, clientName),
   ]);
   return { id: args.id, deleted: true };
 }
 
-async function runSetDeadlineCompletion(env, args = {}, complete) {
+async function runSetDeadlineCompletion(env, args = {}, complete, clientName = null) {
   if (typeof args.id !== "string" || args.id.trim() === "") throw new Error("id is required");
   const timestamp = nowIso();
   if (complete) {
     await batch(env.DB, [
       env.DB.prepare("UPDATE deadlines SET completed_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL AND completed_at IS NULL").bind(timestamp, timestamp, args.id),
       cancelTargetStatement(env.DB, "deadline", args.id, timestamp),
+      attributionStatement(env.DB, "deadlines", args.id, clientName),
     ]);
   } else {
     const existing = await activeDeadline(env, args.id); if (!existing) throw new Error("Deadline not found");
@@ -602,12 +610,19 @@ async function runSetDeadlineCompletion(env, args = {}, complete) {
       env.DB.prepare("UPDATE deadlines SET completed_at = NULL, updated_at = ? WHERE id = ? AND deleted_at IS NULL AND completed_at IS NOT NULL").bind(timestamp, args.id),
       cancelTargetStatement(env.DB, "deadline", args.id, timestamp),
       ...deadlineReminderStatements(env.DB, { ...existing, completed_at: null, updated_at: timestamp }),
+      attributionStatement(env.DB, "deadlines", args.id, clientName),
     ]);
   }
   const current = await activeDeadline(env, args.id); if (!current) throw new Error("Deadline not found"); return rowToDeadline(current);
 }
 
 // --- 写入工具实现（镜像 REST handler 逻辑）--------------------------------
+
+// 记录本次写入是哪个 MCP 客户端做的（DCR 注册时的 client_name，如 "Claude"）。
+// REST/web 写入不经过这里，该列因此只反映 MCP 侧的最近一次改动。
+function attributionStatement(db, table, id, clientName) {
+  return db.prepare(`UPDATE ${table} SET last_modified_by = ? WHERE id = ?`).bind(clientName ?? null, id);
+}
 
 async function getActiveEvent(env, id) {
   return queryOne(env.DB, "SELECT * FROM events WHERE id = ? AND deleted_at IS NULL", [id]);
@@ -627,7 +642,7 @@ async function resolveDefaultColor(env, category, color) {
 }
 
 // 对应 POST /api/events
-async function runCreateEvent(env, args = {}) {
+async function runCreateEvent(env, args = {}, clientName = null) {
   const msg = validateEventInput(args, true);
   if (msg) throw new Error(msg);
   const temporalMsg = validateEventTemporalOrder(args);
@@ -672,13 +687,14 @@ async function runCreateEvent(env, args = {}) {
   }
   if (args.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "event_tags", "event_id", event.id, args.tag_ids, now));
   statements.push(...eventReminderStatements(env.DB, event, reminders));
+  statements.push(attributionStatement(env.DB, "events", event.id, clientName));
   await batch(env.DB, statements);
 
-  return { ...rowToEvent(event), reminders, tags: [] };
+  return { ...rowToEvent(event), reminders, tags: [], last_modified_by: clientName };
 }
 
 // 对应 PUT /api/events/:id
-async function runUpdateEvent(env, args = {}) {
+async function runUpdateEvent(env, args = {}, clientName = null) {
   const { id } = args;
   if (typeof id !== "string" || id === "") throw new Error("id is required");
 
@@ -746,13 +762,14 @@ async function runUpdateEvent(env, args = {}) {
     statements.push(...eventReminderStatements(env.DB, { ...existing, ...body, id, all_day: mergedAllDay }, reminders));
   }
   if (body.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "event_tags", "event_id", id, body.tag_ids, now));
+  statements.push(attributionStatement(env.DB, "events", id, clientName));
   await batch(env.DB, statements);
 
   return { ...rowToEvent(await getActiveEvent(env, id)), ...(reminders ? { reminders } : {}), tags: await tagsForOwner(env, "event_tags", "event_id", id) };
 }
 
 // 对应 DELETE /api/events/:id （软删除）
-async function runDeleteEvent(env, args = {}) {
+async function runDeleteEvent(env, args = {}, clientName = null) {
   const { id } = args;
   if (typeof id !== "string" || id === "") throw new Error("id is required");
 
@@ -762,6 +779,7 @@ async function runDeleteEvent(env, args = {}) {
   await batch(env.DB, [
     env.DB.prepare("UPDATE events SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL").bind(now, now, id),
     cancelTargetStatement(env.DB, "event", id, now),
+    attributionStatement(env.DB, "events", id, clientName),
   ]);
   return { id, deleted: true };
 }
@@ -814,7 +832,7 @@ function buildRecurrenceBody(args) {
 }
 
 // 对应 POST /api/event-series
-async function runCreateEventSeries(env, args = {}) {
+async function runCreateEventSeries(env, args = {}, clientName = null) {
   const body = buildRecurrenceBody(args);
   if (args.tag_ids !== undefined) { const tagMessage = validateTagIds(args.tag_ids); if (tagMessage) throw new Error(tagMessage); const exists = await ensureTagIdsExist(env, args.tag_ids); if (exists) throw new Error(exists); }
   body.color = (await resolveDefaultColor(env, body.category, body.color)) ?? null;
@@ -838,6 +856,7 @@ async function runCreateEventSeries(env, args = {}) {
   const statements = [insertSeriesStatement(env.DB, series)];
   if (args.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "event_series_tags", "series_id", seriesId, args.tag_ids, now));
   instances.forEach((instance, index) => statements.push(insertInstanceStatement(env.DB, series, instance, index)));
+  statements.push(attributionStatement(env.DB, "event_series", seriesId, clientName));
   await batch(env.DB, statements);
   return { series_id: seriesId, created_count: instances.length };
 }
@@ -868,7 +887,7 @@ const SERIES_PATCH_FIELDS = [
   "end_date", "occurrence_count",
 ];
 
-async function runUpdateEventSeries(env, args = {}) {
+async function runUpdateEventSeries(env, args = {}, clientName = null) {
   const id = seriesIdFromArgs(args);
   const series = await getActiveSeries(env, id);
   if (!series) throw new Error("Event series not found");
@@ -941,13 +960,14 @@ async function runUpdateEventSeries(env, args = {}) {
       statements.push(insertInstanceStatement(env.DB, updatedSeries, instance, index, now));
     }
   });
+  statements.push(attributionStatement(env.DB, "event_series", id, clientName));
 
   await batch(env.DB, statements);
   return { series_id: id, updated: true, created_count: instances.length };
 }
 
 // 对应 DELETE /api/event-series/:id
-async function runDeleteEventSeries(env, args = {}) {
+async function runDeleteEventSeries(env, args = {}, clientName = null) {
   const id = seriesIdFromArgs(args);
   const series = await getActiveSeries(env, id);
   if (!series) throw new Error("Event series not found");
@@ -955,6 +975,7 @@ async function runDeleteEventSeries(env, args = {}) {
   await batch(env.DB, [
     env.DB.prepare("UPDATE event_series SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL").bind(now, now, id),
     env.DB.prepare("UPDATE events SET deleted_at=?, updated_at=? WHERE series_id=? AND deleted_at IS NULL").bind(now, now, id),
+    attributionStatement(env.DB, "event_series", id, clientName),
   ]);
   return { id, deleted: true };
 }
@@ -967,7 +988,7 @@ function occurrenceFor(series, originalStartTime) {
 }
 
 // 对应 POST /api/event-series/:id/exceptions —— 跳过某一次
-async function runSkipOccurrence(env, args = {}) {
+async function runSkipOccurrence(env, args = {}, clientName = null) {
   const seriesId = args.series_id;
   const originalStartTime = args.original_start_time;
   if (typeof seriesId !== "string" || seriesId === "") throw new Error("series_id is required");
@@ -997,6 +1018,7 @@ async function runSkipOccurrence(env, args = {}) {
       .bind(crypto.randomUUID(), seriesId, originalStartTime, now, now),
     env.DB.prepare("UPDATE events SET deleted_at = ?, updated_at = ? WHERE series_id = ? AND original_start_time = ? AND deleted_at IS NULL")
       .bind(now, now, seriesId, originalStartTime),
+    attributionStatement(env.DB, "event_series", seriesId, clientName),
   ]);
   const created = await queryOne(
     env.DB,
@@ -1007,7 +1029,7 @@ async function runSkipOccurrence(env, args = {}) {
 }
 
 // 对应 DELETE /api/event-series/:id/exceptions/:exceptionId —— 恢复被跳过的一次
-async function runRestoreOccurrence(env, args = {}) {
+async function runRestoreOccurrence(env, args = {}, clientName = null) {
   const seriesId = args.series_id;
   const originalStartTime = args.original_start_time;
   if (typeof seriesId !== "string" || seriesId === "") throw new Error("series_id is required");
@@ -1058,6 +1080,7 @@ async function runRestoreOccurrence(env, args = {}) {
         ),
     );
   }
+  statements.push(attributionStatement(env.DB, "event_series", seriesId, clientName));
   await batch(env.DB, statements);
   return { series_id: seriesId, original_start_time: originalStartTime, restored: true };
 }
@@ -1077,7 +1100,7 @@ function moveRequestStartDate(body, newStartDate) {
 }
 
 // 对应 POST /api/event-series/:id/split —— 从 split_date 起切成两段
-async function runSplitSeries(env, args = {}) {
+async function runSplitSeries(env, args = {}, clientName = null) {
   const seriesId = args.series_id;
   const splitDate = args.split_date;
   if (typeof seriesId !== "string" || seriesId === "") throw new Error("series_id is required");
@@ -1138,6 +1161,8 @@ async function runSplitSeries(env, args = {}) {
       statements.push(insertInstanceStatement(env.DB, newSeries, instance, index, now));
     }
   });
+  statements.push(attributionStatement(env.DB, "event_series", seriesId, clientName));
+  statements.push(attributionStatement(env.DB, "event_series", newSeriesId, clientName));
   await batch(env.DB, statements);
   return {
     old_series_id: seriesId,
@@ -1161,18 +1186,18 @@ function extractBearer(request) {
 //   - 本地调试旁路：MCP_WRITE_TOKEN 完全匹配（生产不应设置）
 async function authenticate(request, env) {
   const token = extractBearer(request);
-  if (!token) return false;
+  if (!token) return null;
 
   // 本地调试旁路
-  if (env.MCP_WRITE_TOKEN && safeEqual(token, env.MCP_WRITE_TOKEN)) return true;
+  if (env.MCP_WRITE_TOKEN && safeEqual(token, env.MCP_WRITE_TOKEN)) return { scope: "calendar", clientName: "local-debug" };
 
   // OAuth access token
-  if (!env.SESSION_SECRET) return false;
+  if (!env.SESSION_SECRET) return null;
   const payload = await verifyAccessToken(token, env.SESSION_SECRET);
-  if (!payload) return false;
+  if (!payload) return null;
   // audience 绑定：token 的 aud 必须指向本 MCP 资源
-  if (normalizeResource(payload.aud) !== normalizeResource(canonicalResource(request))) return false;
-  return true;
+  if (normalizeResource(payload.aud) !== normalizeResource(canonicalResource(request))) return null;
+  return { scope: payload.scope || "calendar", clientName: payload.client_name || null };
 }
 
 // 401：附带 WWW-Authenticate，指向受保护资源元数据，触发客户端走 OAuth。
@@ -1201,28 +1226,32 @@ function resolveToolName(name) {
   return LEGACY_TOOL_NAMES.has(name) ? `calendar_${name}` : name;
 }
 
-async function callTool(env, name, args) {
+export function toolAllowedForScope(scope, name) {
+  return scope !== READ_SCOPE || READ_ONLY_TOOLS.some((tool) => tool.name === resolveToolName(name));
+}
+
+async function callTool(env, name, args, clientName) {
   switch (resolveToolName(name)) {
     case "calendar_list_events": return runListEvents(env, args);
     case "calendar_list_categories": return runListCategories(env);
     case "calendar_list_tags": return runListTags(env);
     case "calendar_list_deadlines": return runListDeadlines(env, args);
-    case "calendar_create_deadline": return runCreateDeadline(env, args);
+    case "calendar_create_deadline": return runCreateDeadline(env, args, clientName);
     case "calendar_get_deadline": return runGetDeadline(env, args);
-    case "calendar_update_deadline": return runUpdateDeadline(env, args);
-    case "calendar_delete_deadline": return runDeleteDeadline(env, args);
-    case "calendar_complete_deadline": return runSetDeadlineCompletion(env, args, true);
-    case "calendar_reopen_deadline": return runSetDeadlineCompletion(env, args, false);
-    case "calendar_create_event": return runCreateEvent(env, args);
-    case "calendar_update_event": return runUpdateEvent(env, args);
-    case "calendar_delete_event": return runDeleteEvent(env, args);
-    case "calendar_create_event_series": return runCreateEventSeries(env, args);
+    case "calendar_update_deadline": return runUpdateDeadline(env, args, clientName);
+    case "calendar_delete_deadline": return runDeleteDeadline(env, args, clientName);
+    case "calendar_complete_deadline": return runSetDeadlineCompletion(env, args, true, clientName);
+    case "calendar_reopen_deadline": return runSetDeadlineCompletion(env, args, false, clientName);
+    case "calendar_create_event": return runCreateEvent(env, args, clientName);
+    case "calendar_update_event": return runUpdateEvent(env, args, clientName);
+    case "calendar_delete_event": return runDeleteEvent(env, args, clientName);
+    case "calendar_create_event_series": return runCreateEventSeries(env, args, clientName);
     case "calendar_get_event_series": return runGetEventSeries(env, args);
-    case "calendar_update_event_series": return runUpdateEventSeries(env, args);
-    case "calendar_delete_event_series": return runDeleteEventSeries(env, args);
-    case "calendar_skip_occurrence": return runSkipOccurrence(env, args);
-    case "calendar_restore_occurrence": return runRestoreOccurrence(env, args);
-    case "calendar_split_series": return runSplitSeries(env, args);
+    case "calendar_update_event_series": return runUpdateEventSeries(env, args, clientName);
+    case "calendar_delete_event_series": return runDeleteEventSeries(env, args, clientName);
+    case "calendar_skip_occurrence": return runSkipOccurrence(env, args, clientName);
+    case "calendar_restore_occurrence": return runRestoreOccurrence(env, args, clientName);
+    case "calendar_split_series": return runSplitSeries(env, args, clientName);
     default: throw new Error(`未知工具：${name}`);
   }
 }
@@ -1240,7 +1269,7 @@ function toolError(id, message) {
   return rpcResult(id, { content: [{ type: "text", text: message }], isError: true });
 }
 
-async function handleMessage(request, env, msg) {
+async function handleMessage(request, env, msg, auth) {
   const isNotification = msg.id === undefined || msg.id === null;
   const { method, params, id } = msg;
 
@@ -1268,13 +1297,16 @@ async function handleMessage(request, env, msg) {
         return rpcResult(id, {});
 
       case "tools/list":
-        return rpcResult(id, { tools: TOOLS });
+        return rpcResult(id, { tools: auth.scope === READ_SCOPE ? READ_ONLY_TOOLS : TOOLS });
 
       case "tools/call": {
         const name = params?.name;
         const args = params?.arguments ?? {};
+        if (!toolAllowedForScope(auth.scope, name)) {
+          return toolError(id, "此授权仅允许查询 Calendar，不能执行写入操作。");
+        }
         try {
-          const data = await callTool(env, name, args);
+          const data = await callTool(env, name, args, auth.clientName);
           const toolResult = { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
           if (TOOLS.find((tool) => tool.name === resolveToolName(name))?.outputSchema) toolResult.structuredContent = data;
           return rpcResult(id, toolResult);
@@ -1299,7 +1331,8 @@ export async function onRequestPost(context) {
   const { request, env } = context;
 
   // 所有 /mcp 请求都需有效凭据（含 initialize）。未认证 → 401 触发 OAuth。
-  if (!(await authenticate(request, env))) {
+  const auth = await authenticate(request, env);
+  if (!auth) {
     return unauthorized(request);
   }
 
@@ -1316,14 +1349,14 @@ export async function onRequestPost(context) {
   if (Array.isArray(payload)) {
     const responses = [];
     for (const msg of payload) {
-      const r = await handleMessage(request, env, msg);
+      const r = await handleMessage(request, env, msg, auth);
       if (r) responses.push(r);
     }
     if (responses.length === 0) return new Response(null, { status: 202, headers: CORS_HEADERS });
     return jsonResponse(responses, 200);
   }
 
-  const response = await handleMessage(request, env, payload);
+  const response = await handleMessage(request, env, payload, auth);
   if (response === null) return new Response(null, { status: 202, headers: CORS_HEADERS });
   return jsonResponse(response, 200);
 }

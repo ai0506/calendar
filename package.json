@@ -10,6 +10,7 @@
     "test:reminders": "node tests/reminders.test.mjs",
     "test:series-patch": "node tests/series-patch.test.mjs",
     "test:tags": "node tests/tags.test.mjs",
+    "test:oauth-scopes": "node tests/oauth-scopes.test.mjs",
     "db:local": "wrangler d1 migrations apply calendar-db --local",
     "db:remote": "wrangler d1 migrations apply calendar-db --remote",
     "db:create": "wrangler d1 create calendar-db",

@@ -17,6 +17,8 @@ import {
   normalizeResource,
   CODE_TTL,
   DEFAULT_SCOPE,
+  normalizeScope,
+  scopePermits,
   USER_SUB,
 } from "../_lib/oauth.js";
 
@@ -96,17 +98,18 @@ function collectParams(src, clientName) {
     state: src.get("state") || "",
     code_challenge: src.get("code_challenge") || "",
     code_challenge_method: src.get("code_challenge_method") || "",
-    scope: src.get("scope") || DEFAULT_SCOPE,
+    scope: src.get("scope") || "",
     resource: src.get("resource") || "",
     client_name: clientName || "",
   };
 }
 
 // 校验除 client/redirect 外的其余参数。返回 error code 字符串或 null。
-function validateAuthParams(p) {
+function validateAuthParams(p, client) {
   if (p.response_type !== "code") return "unsupported_response_type";
   if (!p.code_challenge) return "invalid_request:missing code_challenge";
   if (p.code_challenge_method !== "S256") return "invalid_request:code_challenge_method must be S256";
+  if (!normalizeScope(p.scope) || !scopePermits(p.scope, client?.scope)) return "invalid_scope:requested scope is not allowed";
   return null;
 }
 
@@ -130,7 +133,8 @@ export async function onRequestGet({ request, env }) {
   if (error) return errorPage(error); // 不重定向
 
   // 其余参数错误：redirect_uri 合法，按规范重定向回客户端
-  const paramErr = validateAuthParams(p);
+  p.scope = p.scope || client.scope || DEFAULT_SCOPE;
+  const paramErr = validateAuthParams(p, client);
   if (paramErr) {
     const [code, desc] = paramErr.split(":");
     return redirectWithError(p.redirect_uri, p.state, code, desc);
@@ -155,7 +159,8 @@ export async function onRequestPost({ request, env }) {
   const { client, error } = await loadClientAndRedirect(env, p.client_id, p.redirect_uri);
   if (error) return errorPage(error); // 不重定向
 
-  const paramErr = validateAuthParams(p);
+  p.scope = p.scope || client.scope || DEFAULT_SCOPE;
+  const paramErr = validateAuthParams(p, client);
   if (paramErr) {
     const [code, desc] = paramErr.split(":");
     return redirectWithError(p.redirect_uri, p.state, code, desc);
@@ -187,7 +192,7 @@ export async function onRequestPost({ request, env }) {
       p.code_challenge,
       p.code_challenge_method,
       resource,
-      p.scope || DEFAULT_SCOPE,
+      p.scope,
       USER_SUB,
       now + CODE_TTL,
       new Date().toISOString(),

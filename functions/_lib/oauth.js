@@ -18,8 +18,22 @@ export const REFRESH_TOKEN_TTL = 365 * 24 * 3600; // refresh token 有效期（�
 // 说明：refresh token 每次使用都会轮换并重置有效期，只要连接器保持使用即“永不过期”；
 // 设为 1 年是为了即便长期不用也不至于掉线（需要重新授权）。
 export const CODE_TTL = 300;                       // 授权码有效期（秒）：5 分钟
-export const DEFAULT_SCOPE = "calendar";           // 唯一 scope，允许调用全部工具
-export const USER_SUB = "owner";                   // 单用户
+// `calendar` 保持为旧客户端的完整读写权限；新客户端可申请最小的只读权限。
+export const DEFAULT_SCOPE = "calendar";
+export const READ_SCOPE = "calendar.read";
+export const USER_SUB = "owner";
+
+export function normalizeScope(value) {
+  if (value === DEFAULT_SCOPE || value === READ_SCOPE) return value;
+  return null;
+}
+
+export function scopePermits(requested, clientScope) {
+  const client = normalizeScope(clientScope || DEFAULT_SCOPE);
+  const target = normalizeScope(requested || clientScope || DEFAULT_SCOPE);
+  if (!client || !target) return false;
+  return client === DEFAULT_SCOPE || client === target;
+}
 
 // --- 编解码 ---------------------------------------------------------------
 

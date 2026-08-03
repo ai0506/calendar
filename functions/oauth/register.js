@@ -6,7 +6,7 @@
 // 无需认证（DCR 端点开放）。仅接受 https 或 localhost 的 redirect_uri。
 
 import { run } from "../_lib/db.js";
-import { randomToken, jsonResponse, oauthError, OAUTH_CORS, DEFAULT_SCOPE } from "../_lib/oauth.js";
+import { randomToken, jsonResponse, oauthError, OAUTH_CORS, DEFAULT_SCOPE, normalizeScope } from "../_lib/oauth.js";
 
 function isAllowedRedirectUri(uri) {
   if (typeof uri !== "string") return false;
@@ -49,7 +49,8 @@ export async function onRequestPost({ request, env }) {
     ? body.response_types
     : ["code"];
   const clientName = typeof body.client_name === "string" ? body.client_name : null;
-  const scope = typeof body.scope === "string" ? body.scope : DEFAULT_SCOPE;
+  const scope = normalizeScope(typeof body.scope === "string" ? body.scope : DEFAULT_SCOPE);
+  if (!scope) return oauthError("invalid_client_metadata", "Only calendar or calendar.read scope is supported");
 
   await run(
     env.DB,

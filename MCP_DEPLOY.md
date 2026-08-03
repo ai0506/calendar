@@ -18,6 +18,7 @@
 | `functions/oauth/authorize.js` | 授权端点（登录页 + 签发授权码） |
 | `functions/oauth/token.js` | 令牌端点（authorization_code / refresh_token） |
 | `migrations/0006_oauth.sql` | oauth_clients / oauth_codes / oauth_refresh_tokens 三张表 |
+| `migrations/0011_mcp_attribution.sql` | events / deadlines / event_series 新增 `last_modified_by` 列，记录最近一次 MCP 写入的客户端 |
 | `.dev.vars` / `.dev.vars.example` | 新增 `MCP_WRITE_TOKEN`（仅本地调试） |
 
 **未改动**：现有 REST API（`functions/api/*`）、`_middleware.js`、`_lib` 其余文件、API_TOKEN、Cookie 登录。
@@ -29,10 +30,12 @@ Deadline MCP 使用与 REST API 相同的 D1 表和 `functions/_lib/deadlines.js
 ## 2. 认证模型（简述）
 
 - `/mcp` 每个请求都需 `Authorization: Bearer <access_token>`；无/无效 token → 401 + `WWW-Authenticate`，触发 Claude 走 OAuth。
+- OAuth 支持 `calendar`（原有完整读写）与 `calendar.read`（只读）两个 scope。`calendar.read` 令牌在 `tools/list` 中只会看到查询工具，服务端也会拒绝任何写工具调用；ChatAI 使用该 scope。
 - access token：无状态签名（HMAC，密钥复用 `SESSION_SECRET`），含 `aud`（= `https://calendar.ai0506.com/mcp`）、1 小时过期；`/mcp` 校验签名 + 过期 + aud。
 - 授权码：入库、5 分钟过期、单次使用（原子置位防重放）、绑定 client + redirect_uri + PKCE(S256) + resource。
 - refresh token：入库存哈希、30 天、轮换（用一次即失效）。
 - 授权页复用**本人登录密码**（`PASSWORD`）作为同意凭据 —— 密码本身不会成为 access token。
+- **写入归因**：DCR 注册时客户端自报的 `client_name`（如 `Claude`、`ChatGPT`）在签发 access token 时一并签入 token，`/mcp` 每次写操作都会把它写入对应 event / deadline / event_series 行的 `last_modified_by` 列。REST/网页端 cookie 登录写入不经过这里，该列保持为空。`client_name` 由客户端自报、未经校验，仅用于单用户场景下区分"是哪个已连接的 AI 改的"，不作为安全边界。`MCP_WRITE_TOKEN` 本地调试旁路固定记为 `local-debug`。
 
 ---
 
@@ -132,7 +135,7 @@ DDL 使用独立的 `due_time`、`priority` 和完成状态，不要当作普通
 
 ## 8. 需要你手动处理的清单（汇总）
 
-- [ ] `npm run db:remote`：远程应用 0006 迁移
+- [ ] `npm run db:remote`：远程应用 0006、0011 迁移
 - [ ] 确认生产环境变量 `SESSION_SECRET` 为足够长的随机串
 - [ ] 确认生产**未设置** `MCP_WRITE_TOKEN`
 - [ ] `npm run deploy`：部署

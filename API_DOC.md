@@ -434,3 +434,11 @@ Remote MCP `/mcp` 提供与上述 REST API 对应的单次 DDL 工具：
 | `calendar_reopen_deadline` | 重新打开，重复调用幂等 |
 
 MCP 工具直接访问同一 D1 数据库，并复用 REST 的字段校验、优先级枚举、截止状态和软删除规则。
+
+#### 写入归因（`last_modified_by`）
+
+`events` / `deadlines` / `event_series` 三张表都有 `last_modified_by` 列（迁移 `0011_mcp_attribution.sql`），记录**最近一次通过 MCP 写入该行的客户端名**（OAuth 动态注册时客户端自报的 `client_name`，例如 `"Claude"`、`"ChatGPT"`）。任何读取到该行的接口（REST GET、MCP `list_*` / `get_*`）都会原样带出这个字段。
+
+- 该字段只在 MCP 工具的写操作（create / update / delete / complete / reopen / skip / restore / split 等）中被写入；REST/网页端 cookie 登录的写入不经过这里，不会更新它。
+- 值为 `null` 表示该行从未被 MCP 写过（网页手动创建，或早于本迁移的历史数据）。
+- `client_name` 由客户端自报、未经服务端校验，仅用于单用户场景下的溯源参考，不是安全边界。

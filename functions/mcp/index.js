@@ -182,11 +182,6 @@ const DEADLINE_OUTPUT_SCHEMA = {
   additionalProperties: true,
 };
 
-const DEADLINE_LIST_OUTPUT_SCHEMA = {
-  type: "array",
-  items: DEADLINE_OUTPUT_SCHEMA,
-};
-
 const TOOLS = [
   {
     name: "calendar_list_events",
@@ -234,7 +229,6 @@ const TOOLS = [
       tag_ids: { type: "array", items: { type: "string" }, maxItems: 5, description: "可选；同时拥有全部指定标签的 Deadline（AND）。" },
       include_completed: { type: "boolean", description: "是否包含已完成项，默认 true" },
     }, additionalProperties: false },
-    outputSchema: DEADLINE_LIST_OUTPUT_SCHEMA,
   },
   {
     name: "calendar_create_deadline",

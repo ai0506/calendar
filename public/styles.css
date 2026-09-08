@@ -218,6 +218,8 @@ button:active,
 .add-btn svg{ width:14px;height:14px; }
 
 .notification-btn{ position:relative; border:0; background:transparent; font-size:17px; cursor:pointer; padding:7px; border-radius:9px; transition:background .18s var(--ease-out); }
+.subscription-btn{ border:1px solid var(--hairline); background:var(--fill); color:var(--accent); border-radius:9px; padding:6px 8px; font:inherit; font-size:11px; font-weight:700; letter-spacing:.04em; cursor:pointer; }
+.subscription-btn:hover{ background:var(--fill-strong); }
 .notification-btn:hover{ background:var(--fill); }
 .notification-btn span{ position:absolute; right:1px; top:1px; min-width:16px; height:16px; padding:0 4px; border-radius:9px; background:var(--danger); color:#fff; font:700 10px/16px var(--font); box-shadow:0 0 0 2px var(--material-bar); }
 
@@ -276,7 +278,11 @@ button:active,
 .inspector-eyebrow{ font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--accent); margin-bottom:4px; }
 .inspector-title{ font-size:26px; font-weight:700; letter-spacing:-0.03em; line-height:1.1; margin-bottom:3px; }
 .inspector-sub{ font-size:13px; color:var(--muted); margin-bottom:18px; }
-.agenda-list{ display:flex; flex-direction:column; gap:8px; flex:1; }
+/* 定高槽位：高度只跟视口走，不跟内容走。切换筛选时下方的 Categories /
+   Tags 必须纹丝不动（FRONTEND_SPEC §2），所以事件条数的变化只能被这个
+   槽位内部的滚动吸收，不能外溢成布局高度变化。 */
+.agenda-list{ display:flex; flex-direction:column; gap:8px; flex:none;
+  height:clamp(96px, 30vh, 340px); overflow-y:auto; scrollbar-gutter:stable; }
 .agenda-item{
   display:flex; gap:11px; padding:11px 13px; border-radius:var(--r-card);
   background:var(--fill); cursor:pointer; align-items:stretch;
@@ -303,6 +309,9 @@ button:active,
 .cat-item:hover{ background:var(--fill); }
 .cat-item.off{ opacity:.38; }
 .cat-dot{ width:10px;height:10px;border-radius:50%; flex-shrink:0; box-shadow:0 0 0 3px color-mix(in srgb, currentColor 0%, transparent); }
+/* Academics 的科目缩进一级，读起来是分类下的子项而不是并列分类。 */
+.cat-item-sub{ padding-left:22px; font-size:13px; }
+.cat-item-sub .cat-dot{ width:8px;height:8px; }
 
 /* ---- 6. Time grid (week / day / portrait timeline) ------------------- */
 .time-view{ flex:1; min-height:0; display:flex; flex-direction:column; }
@@ -377,6 +386,7 @@ button:active,
 .ddl-chip.done{ background:var(--fill); color:var(--muted); border-left-color:var(--faint); text-decoration:line-through; }
 
 .ddl-rail{ width:100%; min-width:0; margin:12px 0 8px; padding:12px 13px; border:0.5px solid var(--hairline); border-radius:var(--r-card); background:var(--card); box-shadow:var(--shadow-card); }
+.ddl-rail-body{ height:clamp(84px, 24vh, 231px); overflow-y:auto; scrollbar-gutter:stable; }
 .ddl-rail-head{ display:flex; align-items:center; justify-content:space-between; font-size:11.5px; font-weight:700; color:var(--accent); text-transform:uppercase; letter-spacing:0.03em; }
 .ddl-rail-head span:last-child{ font-size:10.5px; color:var(--muted); font-weight:500; text-transform:none; letter-spacing:0; }
 .ddl-list{ display:flex; flex-direction:column; gap:6px; margin-top:10px; }
@@ -483,6 +493,7 @@ body.is-portrait .inspector{
   transition:opacity .22s var(--ease-out);
 }
 .scrim.open{ opacity:1; pointer-events:auto; }
+.form-validation-scrim{ z-index:110; }
 /* JS drives present/dismiss when the fluid layer is active — hand it the wheel. */
 body.fx-on .scrim{ transition:none; }
 
@@ -537,6 +548,10 @@ button.tag-chip,button.tag-filter{ cursor:pointer; }
 }
 .swatch:hover{ transform:scale(1.08); }
 .swatch.selected{ box-shadow:0 0 0 2.5px var(--bg-elevated), 0 0 0 4.5px currentColor; }
+/* 科目行只在选中 Academics 分类时出现，缩小一号与分类行区分。 */
+.subject-swatches{ display:flex; gap:8px; flex-wrap:wrap; flex-basis:100%; margin-top:10px; padding-top:10px; border-top:0.5px solid var(--hairline); }
+.subject-swatches .swatch{ width:26px; height:26px; border-width:2px; }
+.subject-swatches .swatch-none{ box-shadow:inset 0 0 0 1px rgba(0,0,0,.10); }
 .all-day-toggle{ display:flex; align-items:center; gap:9px; margin-bottom:15px; font-size:14px; }
 .all-day-toggle input[type=checkbox]{ width:18px; height:18px; accent-color:var(--accent); }
 #timeFields{ transition:opacity .2s var(--ease-out); }
@@ -676,6 +691,8 @@ button.tag-chip,button.tag-filter{ cursor:pointer; }
 .login-mark{ width:11px; height:11px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 5px var(--accent-wash); margin-bottom:20px; }
 .login-card h1{ margin:0 0 6px; font-size:25px; font-weight:700; letter-spacing:-0.03em; }
 .login-card p{ margin:0 0 22px; color:var(--muted); font-size:14px; }
+.docs-link{ display:inline-block; margin-top:-12px; margin-bottom:20px; color:var(--accent); font-size:13px; text-decoration:none; }
+.docs-link:hover{ text-decoration:underline; }
 .login-card label{ display:block; font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:7px; }
 .login-card input{
   width:100%; border:1px solid var(--hairline); border-radius:11px; padding:12px;
@@ -701,6 +718,17 @@ button.tag-chip,button.tag-filter{ cursor:pointer; }
 
 /* ---- 13. Notifications ----------------------------------------------- */
 .notifications-modal{ width:420px; height:min(580px, calc(100dvh - 32px)); display:flex; flex-direction:column; }
+.subscriptions-modal{ width:500px; max-height:min(620px, calc(100dvh - 32px)); display:flex; flex-direction:column; }
+.subscriptions-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.subscriptions-head h2{ margin-bottom:0; }
+.subscriptions-note{ margin:14px 0; color:var(--muted); font-size:13px; }
+.subscriptions-list{ overflow-y:auto; scrollbar-gutter:stable; }
+.subscription-row{ display:flex; align-items:center; gap:10px; padding:10px 0; border-top:.5px solid var(--hairline); }
+.subscription-dot{ width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+.subscription-main{ min-width:0; flex:1; display:grid; gap:4px; }
+.subscription-main strong{ font-size:14px; }
+.subscription-url{ min-width:0; width:100%; border:0; padding:0; background:transparent; color:var(--muted); font:inherit; font-size:11px; overflow:hidden; text-overflow:ellipsis; }
+.subscription-copy{ border:0; border-radius:8px; padding:7px 9px; background:var(--accent-wash); color:var(--accent); font:inherit; font-size:12px; font-weight:700; cursor:pointer; }
 .notifications-head{ display:flex; justify-content:space-between; align-items:center; gap:12px; flex-shrink:0; }
 .notifications-head h2{ margin-bottom:0; }
 .notifications-head-actions{ display:flex; align-items:center; gap:10px; }
@@ -730,6 +758,7 @@ button.tag-chip,button.tag-filter{ cursor:pointer; }
   .modal{ width:calc(100vw - 20px); }
   .event-modal{ width:calc(100vw - 20px); }
   .notifications-head{ align-items:flex-start; }
+  .subscriptions-modal{ width:calc(100vw - 20px); }
   .notifications-head-actions{ gap:6px; }
   .notif-read-all{ padding:7px 10px; }
   .notification-delivery{ align-items:flex-end; }
@@ -750,7 +779,8 @@ body.fx-on.is-portrait .modal{
 }
 body.fx-on.is-portrait .event-modal,
 body.fx-on.is-portrait .detail-modal,
-body.fx-on.is-portrait .notifications-modal{ height:auto; max-height:calc(100dvh - 36px); }
+body.fx-on.is-portrait .notifications-modal,
+body.fx-on.is-portrait .subscriptions-modal{ height:auto; max-height:calc(100dvh - 36px); }
 body.fx-on.is-portrait .sheet-grab{
   display:block; width:38px; height:5px; border-radius:3px;
   background:var(--faint); margin:2px auto 14px; flex-shrink:0;

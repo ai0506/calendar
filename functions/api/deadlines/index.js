@@ -15,6 +15,7 @@ import { nowIso } from "../../_lib/events.js";
 import { deadlineReminderStatements } from "../../_lib/reminders.js";
 import { attachTagsToDeadlines, ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../../_lib/tags.js";
 import { ensureCategoryExists } from "../../_lib/categories.js";
+import { validateCategorySubject } from "../../_lib/subjects.js";
 
 function isUniqueConflict(err) {
   return /UNIQUE constraint failed|unique/i.test(String(err?.message || err));
@@ -26,6 +27,7 @@ export async function onRequestGet(context) {
   const from = deadlineDateParam(url.searchParams.get("from"));
   const to = deadlineDateParam(url.searchParams.get("to"));
   const category = url.searchParams.get("category");
+  const subjectId = url.searchParams.get("subject_id");
   const includeCompleted = parseBooleanParam(url.searchParams.get("include_completed"), true);
   const tagIds = url.searchParams.getAll("tag").filter(Boolean);
 
@@ -41,6 +43,7 @@ export async function onRequestGet(context) {
   if (to) { sql += " AND substr(due_time, 1, 10) <= ?"; params.push(to); }
   if (!includeCompleted) sql += " AND completed_at IS NULL";
   if (category) { sql += " AND category = ?"; params.push(category); }
+  if (subjectId) { sql += " AND subject_id = ?"; params.push(subjectId); }
   if (tagIds.length) {
     const placeholders = tagIds.map(() => "?").join(", ");
     sql += ` AND id IN (SELECT deadline_id FROM deadline_tags WHERE tag_id IN (${placeholders}) GROUP BY deadline_id HAVING COUNT(DISTINCT tag_id) = ?)`;
@@ -64,6 +67,8 @@ export async function onRequestPost(context) {
   if (message) return error("validation_error", message, 400);
   const categoryMessage = await ensureCategoryExists(env, body.category);
   if (categoryMessage) return error("validation_error", categoryMessage, 400);
+  const subjectMessage = await validateCategorySubject(env, body.category, body.subject_id);
+  if (subjectMessage) return error("validation_error", subjectMessage, 400);
   const tagMessage = body.tag_ids === undefined ? null : validateTagIds(body.tag_ids);
   if (tagMessage) return error("validation_error", tagMessage, 400);
   if (body.tag_ids !== undefined) {
@@ -80,6 +85,7 @@ export async function onRequestPost(context) {
     due_time: input.due_time,
     all_day: input.all_day === 1 ? 1 : 0,
     category: input.category ?? null,
+    subject_id: input.subject_id ?? null,
     color: input.color ?? null,
     group_title: input.group_title ?? null,
     priority: input.priority || "default",
@@ -93,9 +99,9 @@ export async function onRequestPost(context) {
 
   try {
     const statements = [env.DB.prepare(`INSERT INTO deadlines
-        (id, title, description, due_time, all_day, category, color, group_title,
+        (id, title, description, due_time, all_day, category, subject_id, color, group_title,
          priority, source, external_id, created_at, updated_at, completed_at, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind(...Object.values(deadline)), ...deadlineReminderStatements(env.DB, deadline)];
     if (body.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "deadline_tags", "deadline_id", deadline.id, body.tag_ids, now));
     await batch(env.DB, statements);
@@ -104,5 +110,5 @@ export async function onRequestPost(context) {
     throw err;
   }
 
-  return ok({ ...rowToDeadline(deadline), tags: await tagsForOwner(env, "deadline_tags", "deadline_id", id) }, 201);
+  return ok({ ...rowToDeadline(deadline), tags: await tagsForOwner(env, "deadline_tags", "deadline_id", deadline.id) }, 201);
 }

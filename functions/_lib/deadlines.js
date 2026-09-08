@@ -10,7 +10,7 @@ import {
 const COLOR_RE = /^#[0-9a-f]{6}$/i;
 const DEADLINE_PRIORITIES = new Set(["high", "default", "low"]);
 const DEADLINE_FIELDS = [
-  "title", "description", "due_time", "all_day", "category", "color", "group_title", "priority",
+  "title", "description", "due_time", "all_day", "category", "subject_id", "color", "group_title", "priority",
 ];
 
 function isPresent(value) {
@@ -38,6 +38,7 @@ export function normalizeDeadlineInput(input) {
   if (normalized.description !== undefined) normalized.description = normalizeNullableText(normalized.description);
   if (normalized.group_title !== undefined) normalized.group_title = normalizeNullableText(normalized.group_title);
   if (normalized.category !== undefined) normalized.category = normalizeNullableText(normalized.category);
+  if (normalized.subject_id !== undefined) normalized.subject_id = normalizeNullableText(normalized.subject_id);
   if (normalized.priority !== undefined && normalized.priority !== null) {
     normalized.priority = String(normalized.priority).trim().toLowerCase();
   }
@@ -82,7 +83,7 @@ export function validateDeadlineInput(input, requireCore = true) {
     return "timed deadlines must use an ISO 8601 datetime with timezone";
   }
 
-  for (const field of ["description", "category", "group_title", "source", "external_id"]) {
+  for (const field of ["description", "category", "subject_id", "group_title", "source", "external_id"]) {
     const message = validateOptionalString(input, field);
     if (message) return message;
   }

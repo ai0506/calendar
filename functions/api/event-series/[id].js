@@ -18,6 +18,7 @@ import {
 } from "../../_lib/reminders.js";
 import { ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../../_lib/tags.js";
 import { ensureCategoryExists } from "../../_lib/categories.js";
+import { subjectIdAfterCategoryChange, validateCategorySubject } from "../../_lib/subjects.js";
 
 async function getActiveSeries(env, id) {
   return queryOne(
@@ -47,7 +48,7 @@ export async function onRequestGet(context) {
 }
 
 const SERIES_PATCH_FIELDS = [
-  "title", "description", "category", "color", "group_title", "all_day",
+  "title", "description", "category", "subject_id", "color", "group_title", "all_day",
   "start_time", "end_time", "frequency", "interval", "weekdays",
   "monthly_mode", "monthly_day", "start_date", "end_date", "occurrence_count",
 ];
@@ -98,6 +99,12 @@ export async function onRequestPatch(context) {
   if (recurrenceMessage) return error("validation_error", recurrenceMessage, 400);
   const categoryMessage = await ensureCategoryExists(env, merged.category);
   if (categoryMessage) return error("validation_error", categoryMessage, 400);
+  if (body.category !== undefined && body.subject_id === undefined) {
+    // 分类改成普通分类时清空 subject_id，避免留下孤儿科目。
+    merged.subject_id = await subjectIdAfterCategoryChange(env, merged.category, merged.subject_id);
+  }
+  const subjectMessage = await validateCategorySubject(env, merged.category, merged.subject_id);
+  if (subjectMessage) return error("validation_error", subjectMessage, 400);
   const reminderRequest = requestedReminders(body, merged.all_day === true || merged.all_day === 1);
   if (reminderRequest.error) return error("validation_error", reminderRequest.error, 400);
   const tagMessage = body.tag_ids === undefined ? null : validateTagIds(body.tag_ids);
@@ -134,13 +141,13 @@ export async function onRequestPatch(context) {
       VALUES (?, ?, ?, ?, ?, ?)`)
       .bind(key, "series_patch", params.id, null, requestHash, now),
     env.DB.prepare(`UPDATE event_series SET
-      title = ?, description = ?, category = ?, color = ?, group_title = ?, all_day = ?,
+      title = ?, description = ?, category = ?, subject_id = ?, color = ?, group_title = ?, all_day = ?,
       start_time = ?, end_time = ?, frequency = ?, interval = ?, weekdays = ?, monthly_mode = ?,
       monthly_day = ?, start_date = ?, end_date = ?, occurrence_count = ?, updated_at = ?
       WHERE id = ? AND deleted_at IS NULL`)
       .bind(
         updatedSeries.title, updatedSeries.description, updatedSeries.category,
-        updatedSeries.color, updatedSeries.group_title, updatedSeries.all_day,
+        updatedSeries.subject_id, updatedSeries.color, updatedSeries.group_title, updatedSeries.all_day,
         updatedSeries.start_time, updatedSeries.end_time, updatedSeries.frequency,
         updatedSeries.interval, updatedSeries.weekdays, updatedSeries.monthly_mode,
         updatedSeries.monthly_day, updatedSeries.start_date, updatedSeries.end_date,

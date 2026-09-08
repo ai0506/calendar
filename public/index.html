@@ -10,7 +10,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>AI0506 Calendar</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
-  <link rel="stylesheet" href="/styles.css?v=20260727-171500" />
+  <link rel="stylesheet" href="/styles.css?v=20260905-filter-cascade" />
 </head>
 <body>
   <div class="topbar" id="topbar" aria-hidden="true">
@@ -27,6 +27,7 @@
         <button type="button" data-view="week">Week</button>
         <button type="button" data-view="day">Day</button>
       </div>
+      <button class="subscription-btn" id="subscriptionsButton" type="button" aria-label="Apple Calendar subscriptions">ICS</button>
       <button class="notification-btn" id="notificationsButton" type="button" aria-label="Notifications">🔔<span id="notificationBadge" hidden>0</span></button>
       <button class="add-btn" type="button" data-action="open-event">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
@@ -45,6 +46,7 @@
       <div class="login-mark"></div>
       <h1>AI0506 Calendar</h1>
       <p>Enter your private calendar password.</p>
+      <a class="docs-link" href="/docs">查看项目说明</a>
       <label for="passwordInput">Password</label>
       <input id="passwordInput" type="password" autocomplete="current-password" required />
       <div class="field-error login-error" id="loginError">Invalid password.</div>
@@ -66,7 +68,7 @@
         <button type="button" id="ntEvent" class="active" role="tab" aria-selected="true">Event</button>
         <button type="button" id="ntDdl" role="tab" aria-selected="false">Deadline</button>
       </div>
-      <form id="eventForm">
+      <form id="eventForm" novalidate>
         <div class="event-form-body">
           <div class="field">
             <label for="fTitle">Title</label>
@@ -92,12 +94,12 @@
           </div>
           <div class="row2" id="timeFields">
             <div class="field">
-              <label for="fStart">Start</label>
-              <input type="time" id="fStart" value="09:00" />
+              <label for="fStart">Start (24-hour)</label>
+              <input type="text" id="fStart" value="09:00" placeholder="HH:mm" autocomplete="off" spellcheck="false" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" title="Use 24-hour time in HH:mm format (00:00–23:59)." required />
             </div>
             <div class="field">
-              <label for="fEnd">End</label>
-              <input type="time" id="fEnd" value="10:00" />
+              <label for="fEnd">End (24-hour)</label>
+              <input type="text" id="fEnd" value="10:00" placeholder="HH:mm" autocomplete="off" spellcheck="false" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" title="Use 24-hour time in HH:mm format (00:00–23:59)." required />
             </div>
           </div>
           <div class="field-error" id="timeError">End time must be after start time.</div>
@@ -171,7 +173,7 @@
           <button type="submit" class="btn-create" id="createButton">Create</button>
         </div>
       </form>
-      <form id="ddlForm" hidden>
+      <form id="ddlForm" hidden novalidate>
         <div class="ddl-form-body">
           <div class="field">
             <label for="dTitle">Title</label>
@@ -199,10 +201,11 @@
               <input type="date" id="dDate" required />
             </div>
             <div class="field" id="dTimeField">
-              <label for="dTime">Due time</label>
-              <input type="time" id="dTime" value="18:00" />
+              <label for="dTime">Due time (24-hour)</label>
+              <input type="text" id="dTime" value="18:00" placeholder="HH:mm" autocomplete="off" spellcheck="false" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" title="Use 24-hour time in HH:mm format (00:00–23:59)." required />
             </div>
           </div>
+          <div class="field-error" id="dTimeError">Enter a valid 24-hour time (00:00–23:59).</div>
           <div class="all-day-toggle">
             <input type="checkbox" id="dAllday" />
             <label for="dAllday">All-day (due by end of day)</label>
@@ -213,6 +216,17 @@
           <button type="submit" class="btn-create" id="createDdlButton">Create</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div class="scrim form-validation-scrim" id="formValidationScrim">
+    <div class="modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="formValidationTitle" aria-describedby="formValidationMessage">
+      <div class="sheet-grab" aria-hidden="true"></div>
+      <h2 id="formValidationTitle">Check this item</h2>
+      <p class="confirm-text" id="formValidationMessage"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn-create" id="formValidationClose">OK</button>
+      </div>
     </div>
   </div>
 
@@ -282,6 +296,15 @@
     </div>
   </div>
 
-  <script src="/app.js?v=20260727-171500" defer></script>
+  <div class="scrim" id="subscriptionsScrim">
+    <div class="modal subscriptions-modal" role="dialog" aria-modal="true" aria-labelledby="subscriptionsTitle">
+      <div class="sheet-grab" aria-hidden="true"></div>
+      <div class="subscriptions-head"><h2 id="subscriptionsTitle">Apple Calendar</h2><button type="button" class="btn-cancel" data-action="close-subscriptions">Close</button></div>
+      <p class="subscriptions-note">Subscribe to all events or one category. Choose the matching color for each subscription in Apple Calendar. Tags are included as event metadata.</p>
+      <div class="subscriptions-list" id="subscriptionsList"><div class="notifications-empty">Loading subscriptions…</div></div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=20260905-filter-cascade" defer></script>
 </body>
 </html>

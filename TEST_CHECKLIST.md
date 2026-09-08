@@ -54,7 +54,7 @@
 - [x] `GET /api/categories` 返回 8 个种子分类，颜色各异
 - [x] `POST /api/categories` 创建新分类 → 201
 - [x] 重复分类名 → 409
-- [x] 未注册的 `category` 会被以下写路径拒绝为 `validation_error`：`POST/PUT /api/events`、`POST /api/event-series`、`PATCH /api/event-series/:id`、`POST/PUT /api/deadlines`，以及 MCP 的 `calendar_create_event`/`calendar_update_event`/`calendar_create_event_series`/`calendar_update_event_series`/`calendar_create_deadline`/`calendar_update_deadline`
+- [x] 未注册的 `category` 会被以下写路径拒绝为 `validation_error`：`POST/PUT /api/events`、`POST /api/event-series`、`PATCH /api/event-series/:id`、`POST/PUT /api/deadlines`，以及 MCP 的 `calendar_create_event`/`calendar_create_event_series`/`calendar_update_event_series`/`calendar_create_deadline`/`calendar_update`
 - [x] `POST /api/events/import` 中单条事件 `category` 非法时计入 `skipped`，不影响批次其余条目
 - [x] `category` 留空 / `null` 不触发校验（清空分类仍被允许）
 - [ ] 生产环境针对未注册 `category` 的端到端冒烟验证（本地 `node --check` 与单元测试已过，尚未过真实 D1 联调）
@@ -70,6 +70,13 @@
 - [x] `GET /api/export?format=csv` → `text/csv`，可被 Excel 打开
 - [x] `GET /api/export?format=md` → `text/markdown`，格式可读
 - [x] 导出不包含软删除事件
+
+## Apple Calendar ICS 订阅
+- [x] ICS serializer unit test covers UTC timed events, all-day exclusive end dates, escaped Chinese-safe text structure, tags, and stable recurring-instance UIDs (`npm run test:ics`).
+- [ ] 配置本地 `ICS_SUBSCRIPTION_TOKEN` 后，全部与分类 URL 均返回 `text/calendar; charset=utf-8`；错误 token / 分类 ID 返回 404。
+- [x] macOS Calendar 实际添加生产全部 Event 订阅：订阅成功显示为 `AI0506 Calendar`，设置为蓝色并每日刷新（当前这台 Mac 只提供 On My Mac，未配置可选 iCloud 位置）。
+- [ ] 在 macOS Apple Calendar 实际订阅全部和一个分类源，确认中文标题、定时/全天事件、Tags 文字和分类颜色设置均可见。
+- [ ] 创建、修改、删除普通 Event 及修改重复系列后，等待 Apple Calendar 刷新并确认未产生重复事件。
 
 ## Tags
 
@@ -129,3 +136,29 @@
 - [x] Android 顶栏与图标回归：1260×2880 手机的 Today/通知/New 保持单行且间距清楚；2800×1840@480dpi 平板的 Today 导航组与 Month/Week/Day 操作组明确分隔；网页 favicon 生成的自适应图标在模拟器圆形启动器遮罩下无裁切。
 - [ ] 手机和大屏设备的月/周/日布局、创建/编辑表单、通知跳转人工验收。
 - [ ] 生产 Cloudflare API 与正式数据库联调验收。
+
+## Academics 分类与 Subject 子类（migration 0012）
+
+- [x] `npm run test:subjects`：Category / Subject 联动校验（普通分类拒绝 subject、科目不存在 / 跨分类 / 已停用、分类降级清空 subject）通过。
+- [x] 既有单测全部回归通过：`test:deadlines` / `test:reminders` / `test:series-patch` / `test:tags` / `test:ics` / `test:oauth-scopes`。
+- [x] 本地 D1 迁移：Math / Physics / CS / Other Subjects 的 Event、Deadline、Event Series 全部改挂 `Academics` + 对应 `subject_id`；旧分类行标记 `archived = 1` 而非删除；`Mathematics`、`Personal` 两类历史脏数据一并归位。
+- [x] 颜色归一化：等于所属分类色的历史 `color` 被清空成 `NULL`，真正的自定义颜色保留；原值写入 `migration_0012_backup`。
+- [x] REST 写路径：Academics + 有效 subject 成功；普通分类带 subject、未知 subject、归档分类写入均返回 `validation_error`。
+- [x] 分类降级：只传 `category`（academics → 普通分类）时 `subject_id` 自动清空，不会被残留 subject 判为非法；Event PUT、Deadline PUT、Series PATCH 三条路径均验证。
+- [x] Event Series：创建时 subject 落到系列和全部实例；PATCH 改分类后系列与实例的 `subject_id` 一并清空。
+- [x] MCP：`calendar_list_subjects` 返回 5 个科目；`calendar_create_event` 带 subject 成功且 `color` 为 `null`（不再快照分类色）；非法组合与归档分类被拒；`calendar_list_categories` 不再返回归档分类。
+- [x] ICS：归档分类 feed（`?category=cat-physics`）与新的科目 feed（`?subject=sub-physics`）返回同一批事件，`X-WR-CALNAME` 为 `AI0506 · Physics`；普通分类 feed 不受影响。
+- [x] Web 浏览器回归（本地 Pages + D1）：侧栏 Academics 下缩进列出 5 个科目并可按科目单独筛选；New Event / New Deadline 只在选中 Academics 时展开科目色块，切到普通分类后科目行消失且标签建议随之切换；创建的事件用科目色渲染、数据库中 `color` 为 NULL；agenda 与详情显示科目名；无控制台报错。
+- [ ] 生产 D1 迁移与迁移后回归（未执行，待授权）。
+
+## MCP 工具合并（update / delete）
+
+- [x] `calendar_update` `type=event` 只改标题，`start_time` 保持不变
+- [x] `calendar_update` `type=deadline` 改 `priority` 生效
+- [x] 跨类型串味被拒：`type=event` 传 `priority` → `priority is not valid for type="event"`
+- [x] 跨类型串味被拒：`type=deadline` 传 `start_time`/`reminders` → 两个字段名都在报错里列出
+- [x] 缺 `type` 被拒；`type` 取非法值（如 `series`）被拒
+- [x] `calendar_delete` 两种 type 都返回 `{id, deleted:true}`
+- [x] 旧工具名 `calendar_delete_event` 等已不存在，调用返回「未知工具」
+- [x] MCP 写工具不再暴露 `color`；不传 color 创建事件时 `color` 落 NULL、跟随科目色
+- [x] `calendar_update` 不再暴露 `source` / `external_id`（原 `calendar_update_deadline` 公布了但运行时必拒）

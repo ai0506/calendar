@@ -280,6 +280,7 @@ export function seriesRowToRequest(row, idempotencyKey = crypto.randomUUID()) {
     end_time: row.end_time,
     all_day: row.all_day === 1,
     category: row.category,
+    subject_id: row.subject_id,
     color: row.color,
     group_title: row.group_title,
     frequency: row.frequency,

@@ -1,5 +1,5 @@
 // /api/categories
-//   GET  列出全部分类（按 sort_order, name 排序）
+//   GET  列出全部未归档分类（按 sort_order, name 排序）
 //   POST 创建新分类（服务器生成 id / created_at）
 
 import { queryAll, run } from "../../_lib/db.js";
@@ -11,7 +11,7 @@ export async function onRequestGet(context) {
   const { env } = context;
   const rows = await queryAll(
     env.DB,
-    "SELECT * FROM categories ORDER BY sort_order ASC, name ASC",
+    "SELECT * FROM categories WHERE archived = 0 ORDER BY sort_order ASC, name ASC",
   );
   return ok(rows);
 }

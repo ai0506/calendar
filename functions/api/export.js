@@ -14,6 +14,8 @@ const CSV_COLUMNS = [
   "end_time",
   "all_day",
   "category",
+  "subject_id",
+  "subject_name",
   "color",
   "group_title",
   "source",
@@ -29,6 +31,13 @@ function csvEscape(value) {
     return `"${s.replace(/"/g, '""')}"`;
   }
   return s;
+}
+
+function withSubjectName(events, subjectsById) {
+  return events.map((event) => ({
+    ...event,
+    subject_name: event.subject_id ? subjectsById.get(event.subject_id)?.name ?? null : null,
+  }));
 }
 
 function toCsv(events) {
@@ -59,7 +68,7 @@ function toMarkdown(events) {
     const items = byDate.get(date).sort((a, b) => a.start_time.localeCompare(b.start_time));
     for (const e of items) {
       const time = e.all_day ? "All day" : e.start_time.slice(11, 16);
-      const category = e.category ? ` [${e.category}]` : "";
+      const category = e.category ? ` [${e.subject_name ? `${e.category} / ${e.subject_name}` : e.category}]` : "";
       const tags = e.tags?.length ? ` {${e.tags.map((tag) => tag.name).join(" · ")}}` : "";
       lines.push(`- ${time} ${e.title}${category}${tags}`);
     }
@@ -77,7 +86,12 @@ export async function onRequestGet(context) {
     env.DB,
     "SELECT * FROM events WHERE deleted_at IS NULL ORDER BY start_time ASC",
   );
-  const events = (await attachTagsToEvents(env, rows, "deleted_at IS NULL", [])).map(rowToEvent);
+  const subjects = await queryAll(env.DB, "SELECT id, name FROM subjects");
+  const subjectsById = new Map(subjects.map((subject) => [subject.id, subject]));
+  const events = withSubjectName(
+    (await attachTagsToEvents(env, rows, "deleted_at IS NULL", [])).map(rowToEvent),
+    subjectsById,
+  );
 
   if (format === "json") {
     return new Response(JSON.stringify({ ok: true, data: events }), {

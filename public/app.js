@@ -17,6 +17,9 @@ let currentView = "month";
 let selectedCat = null;
 let portraitTab = "preview";
 let categories = [];
+let subjects = [];
+let selectedSubjectId = null;
+let ddlSelectedSubjectId = null;
 let activeFilters = new Set();
 let tags = [];
 let tagSuggestions = {};
@@ -119,11 +122,15 @@ function cacheElements() {
     dDate: document.getElementById("dDate"),
     dTime: document.getElementById("dTime"),
     dTimeField: document.getElementById("dTimeField"),
+    dTimeError: document.getElementById("dTimeError"),
     dAllday: document.getElementById("dAllday"),
     dCatSwatches: document.getElementById("dCatSwatches"),
     dTagPicker: document.getElementById("dTagPicker"),
     priSeg: document.getElementById("priSeg"),
     createDdlButton: document.getElementById("createDdlButton"),
+    formValidationScrim: document.getElementById("formValidationScrim"),
+    formValidationMessage: document.getElementById("formValidationMessage"),
+    formValidationClose: document.getElementById("formValidationClose"),
     confirmScrim: document.getElementById("confirmScrim"),
     deleteModalTitle: document.getElementById("deleteModalTitle"),
     confirmTitle: document.getElementById("confirmTitle"),
@@ -140,6 +147,9 @@ function cacheElements() {
     confirmReopenButton: document.getElementById("confirmReopenButton"),
     toast: document.getElementById("toast"),
     notificationsButton: document.getElementById("notificationsButton"),
+    subscriptionsButton: document.getElementById("subscriptionsButton"),
+    subscriptionsScrim: document.getElementById("subscriptionsScrim"),
+    subscriptionsList: document.getElementById("subscriptionsList"),
     notificationBadge: document.getElementById("notificationBadge"),
     notificationsScrim: document.getElementById("notificationsScrim"),
     notificationsList: document.getElementById("notificationsList"),
@@ -162,12 +172,15 @@ function bindEvents() {
   document.querySelector("[data-action='open-event']").addEventListener("click", () => openModal());
   document.querySelectorAll("[data-action='close-event']").forEach((button) => button.addEventListener("click", closeModal));
   document.querySelector("[data-action='close-notifications']").addEventListener("click", closeNotifications);
+  document.querySelector("[data-action='close-subscriptions']").addEventListener("click", closeSubscriptions);
   els.notificationsButton.addEventListener("click", openNotifications);
+  els.subscriptionsButton.addEventListener("click", openSubscriptions);
   els.notifReadAll.addEventListener("click", markAllNotificationsRead);
   els.notificationPermissionButton.addEventListener("click", requestBrowserNotificationPermission);
   document.querySelector("[data-action='close-confirm']").addEventListener("click", closeConfirm);
   document.querySelector("[data-action='close-complete']").addEventListener("click", closeComplete);
   document.querySelector("[data-action='close-reopen']").addEventListener("click", closeReopen);
+  els.formValidationClose.addEventListener("click", closeFormValidation);
   els.confirmDeleteButton.addEventListener("click", () => confirmDelete("event"));
   els.deleteThisButton.addEventListener("click", () => confirmDelete("event"));
   els.deleteSeriesButton.addEventListener("click", () => confirmDelete("series"));
@@ -182,6 +195,7 @@ function bindEvents() {
   els.ntDdl.addEventListener("click", () => setNewTab("ddl"));
   els.ddlForm.addEventListener("submit", submitDeadline);
   els.dAllday.addEventListener("change", toggleDdlAllDay);
+  els.dTime.addEventListener("input", validateDeadlineTime);
   els.priSeg.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-priority]");
     if (button) selectDdlPriority(button.dataset.priority);
@@ -195,8 +209,8 @@ function bindEvents() {
   els.loginForm.addEventListener("submit", submitLogin);
   els.eventForm.addEventListener("submit", submitEvent);
   els.fAllday.addEventListener("change", toggleAllDayFields);
-  els.fStart.addEventListener("input", validateTimes);
-  els.fEnd.addEventListener("input", validateTimes);
+  els.fStart.addEventListener("input", previewTimeOrder);
+  els.fEnd.addEventListener("input", previewTimeOrder);
   els.fRepeat.addEventListener("change", () => syncRepeatUI(true));
   els.fRepeatEnd.addEventListener("change", syncRepeatUI);
   els.fDate.addEventListener("input", () => {
@@ -213,6 +227,9 @@ function bindEvents() {
   els.eventScrim.addEventListener("click", (event) => {
     if (event.target === els.eventScrim) closeModal();
   });
+  els.formValidationScrim.addEventListener("click", (event) => {
+    if (event.target === els.formValidationScrim) closeFormValidation();
+  });
   els.confirmScrim.addEventListener("click", (event) => {
     if (event.target === els.confirmScrim) closeConfirm();
   });
@@ -221,6 +238,9 @@ function bindEvents() {
   });
   els.reopenScrim.addEventListener("click", (event) => {
     if (event.target === els.reopenScrim) closeReopen();
+  });
+  els.subscriptionsScrim.addEventListener("click", (event) => {
+    if (event.target === els.subscriptionsScrim) closeSubscriptions();
   });
 
   let resizeTimer = null;
@@ -322,13 +342,76 @@ function setLoginError(message) {
 }
 
 async function loadCategories() {
-  const json = await apiFetch("/api/categories");
-  const rows = Array.isArray(json.data) ? json.data : [];
+  const [categoryJson, subjectJson] = await Promise.all([
+    apiFetch("/api/categories"),
+    apiFetch("/api/subjects"),
+  ]);
+  const rows = Array.isArray(categoryJson.data) ? categoryJson.data : [];
   categories = rows.length ? rows : [FALLBACK_CATEGORY];
+  subjects = Array.isArray(subjectJson.data) ? subjectJson.data : [];
+
+  // 侧栏筛选的粒度：普通分类按分类，Academics 按科目（外加「无科目」一项）。
+  const validKeys = new Set(filterEntries().map((entry) => entry.key));
+  activeFilters = new Set([...activeFilters].filter((key) => validKeys.has(key)));
+  if (activeFilters.size === 0) activeFilters = new Set(validKeys);
+
   const validNames = new Set(categories.map((cat) => cat.name));
-  activeFilters = new Set([...activeFilters].filter((name) => validNames.has(name)));
-  if (activeFilters.size === 0) activeFilters = new Set(categories.map((cat) => cat.name));
   if (!selectedCat || !validNames.has(selectedCat)) selectedCat = categories[0]?.name || FALLBACK_CATEGORY.name;
+  if (!isAcademicsCategory(selectedCat)) selectedSubjectId = null;
+  if (!isAcademicsCategory(ddlSelectedCat)) ddlSelectedSubjectId = null;
+}
+
+// Academics 是唯一带 Subject 子类的特殊分类，由服务端的 kind 字段标记。
+function academicsCategory() {
+  return categories.find((category) => category.kind === "academics") || null;
+}
+
+function isAcademicsCategory(name) {
+  return Boolean(name) && academicsCategory()?.name === name;
+}
+
+function getSubject(id) {
+  return subjects.find((subject) => subject.id === id) || null;
+}
+
+// 筛选键：学业项按科目区分，其余按分类名。
+function filterKeyOf(categoryName, subjectId) {
+  return subjectId ? `subject:${subjectId}` : `cat:${categoryName}`;
+}
+
+// 一个筛选键连带影响的全部键。普通分类只影响自己；academics 父级连带它的
+// 全部科目子级 —— 隐藏 Academics 时科目还留着，不符合层级的直觉。
+function filterGroupOf(key) {
+  const academics = academicsCategory();
+  if (!academics || key !== filterKeyOf(academics.name, null)) return [key];
+  return [key, ...subjects.map((subject) => filterKeyOf(academics.name, subject.id))];
+}
+
+function filterEntries() {
+  const entries = [];
+  for (const category of categories) {
+    const key = filterKeyOf(category.name, null);
+    entries.push({
+      key,
+      // 父级点亮与否看整组：只要还有一个科目在显示，父级就不算关掉。
+      groupKeys: filterGroupOf(key),
+      label: category.name,
+      color: category.color,
+      nested: false,
+    });
+    if (category.kind !== "academics") continue;
+    for (const subject of subjects) {
+      const subjectKey = filterKeyOf(category.name, subject.id);
+      entries.push({
+        key: subjectKey,
+        groupKeys: [subjectKey],
+        label: subject.name,
+        color: subject.color,
+        nested: true,
+      });
+    }
+  }
+  return entries;
 }
 
 async function loadTags() {
@@ -469,6 +552,57 @@ async function openNotifications() {
 
 function closeNotifications() {
   els.notificationsScrim.classList.remove("open");
+}
+
+async function openSubscriptions() {
+  els.subscriptionsScrim.classList.add("open");
+  els.subscriptionsList.innerHTML = '<div class="notifications-empty">Loading subscriptions…</div>';
+  try {
+    const json = await apiFetch("/api/subscriptions");
+    const data = json.data || {};
+    // 分类 feed 里已经排除了 academics 那个「总的」，学业按科目逐条列出。
+    const feeds = [
+      { name: "All events", color: "#0071e3", url: data.all },
+      ...(Array.isArray(data.subjects) ? data.subjects.map((subject) => ({ ...subject, url: subject.url })) : []),
+      ...(Array.isArray(data.categories) ? data.categories.map((category) => ({ ...category, name: category.name, url: category.url })) : []),
+    ].filter((feed) => feed.url);
+    if (!feeds.length) throw new Error("No subscription links are available.");
+    els.subscriptionsList.innerHTML = feeds.map((feed) => `<div class="subscription-row">
+      <span class="subscription-dot" style="background:${escapeAttr(feed.color || "#8E8E93")}"></span>
+      <div class="subscription-main"><strong>${escapeHtml(feed.name)}</strong><input class="subscription-url" value="${escapeAttr(feed.url)}" readonly aria-label="${escapeAttr(feed.name)} subscription URL" /></div>
+      <button type="button" class="subscription-copy" data-subscription-url="${escapeAttr(feed.url)}">Copy</button>
+    </div>`).join("");
+    els.subscriptionsList.querySelectorAll("[data-subscription-url]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        try {
+          await copyText(button.dataset.subscriptionUrl);
+          button.textContent = "Copied";
+          setTimeout(() => { button.textContent = "Copy"; }, 1500);
+        } catch (_) {
+          showToast("Copy failed. Select the link and copy it manually.");
+        }
+      });
+    });
+  } catch (err) {
+    els.subscriptionsList.innerHTML = `<div class="notifications-empty">${escapeHtml(err.message || "Subscriptions are unavailable.")}</div>`;
+  }
+}
+
+function closeSubscriptions() {
+  els.subscriptionsScrim.classList.remove("open");
+}
+
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(value);
+  const input = document.createElement("textarea");
+  input.value = value;
+  input.style.position = "fixed";
+  input.style.opacity = "0";
+  document.body.appendChild(input);
+  input.select();
+  const copied = document.execCommand("copy");
+  input.remove();
+  if (!copied) throw new Error("Copy failed");
 }
 
 function syncReadAllButton() {
@@ -702,12 +836,21 @@ function applyDeadlines(rows) {
   deadlinesByDate = next;
 }
 
+// 颜色优先级：事项显式颜色 > 科目颜色 > 分类颜色。
+// "default" / 空值都表示「跟随分类或科目」，不是一个具体颜色。
+function resolveItemColor(row, categoryName) {
+  const explicit = row.color && String(row.color).toLowerCase() !== "default" ? row.color : null;
+  if (explicit) return explicit;
+  const subject = row.subject_id ? getSubject(row.subject_id) : null;
+  if (subject?.color) return subject.color;
+  return getCategory(categoryName).color || FALLBACK_CATEGORY.color;
+}
+
 function adaptDeadline(row) {
   if (!row || !row.id || !row.due_time) return null;
   const dateKey = row.due_time.slice(0, 10);
   const categoryName = row.category || FALLBACK_CATEGORY.name;
-  const category = getCategory(categoryName);
-  const color = !row.color || String(row.color).toLowerCase() === "default" ? category.color : row.color;
+  const color = resolveItemColor(row, categoryName);
   const allDay = Boolean(row.all_day);
   const time = allDay ? null : row.due_time.slice(11, 16);
   const dueMs = allDay ? new Date(`${dateKey}T23:59:59`).getTime() : Date.parse(row.due_time);
@@ -719,6 +862,8 @@ function adaptDeadline(row) {
     allDay,
     dueMs,
     cat: categoryName,
+    subjectId: row.subject_id || null,
+    filterKey: filterKeyOf(categoryName, row.subject_id || null),
     color,
     bg: colorToSoftBg(color),
     priority: row.priority || "default",
@@ -734,16 +879,14 @@ function adaptEvent(row) {
   const start = row.all_day ? "00:00" : timeFromIso(row.start_time, "00:00");
   const end = row.all_day ? "23:59" : timeFromIso(row.end_time, start);
   const categoryName = row.category || FALLBACK_CATEGORY.name;
-  const category = getCategory(categoryName);
-  // "default" means the event follows its category color at render time.
-  const color = !row.color || (typeof row.color === "string" && row.color.toLowerCase() === "default")
-    ? (category.color || FALLBACK_CATEGORY.color)
-    : row.color;
+  const color = resolveItemColor(row, categoryName);
   return {
     id: row.id,
     title: row.title || "Untitled",
     description: row.description || "",
     cat: categoryName,
+    subjectId: row.subject_id || null,
+    filterKey: filterKeyOf(categoryName, row.subject_id || null),
     color,
     bg: colorToSoftBg(color),
     start,
@@ -1125,9 +1268,9 @@ function renderInspector() {
     </div>
     <div class="inspector-heading">Categories</div>
     <ul class="cat-list">
-      ${categories.map((cat) => `
-        <li class="cat-item ${activeFilters.has(cat.name) ? "" : "off"}" data-category="${escapeHtml(cat.name)}">
-          <span class="cat-dot" style="background:${cat.color}"></span>${escapeHtml(cat.name)}
+      ${filterEntries().map((entry) => `
+        <li class="cat-item ${entry.nested ? "cat-item-sub" : ""} ${entry.groupKeys.some((member) => activeFilters.has(member)) ? "" : "off"}" data-category="${escapeAttr(entry.key)}">
+          <span class="cat-dot" style="background:${entry.color}"></span>${escapeHtml(entry.label)}
         </li>`).join("")}
     </ul>
     ${tags.length ? `<div class="inspector-heading tag-filter-heading">Tags</div>
@@ -1171,9 +1314,14 @@ function bindInspectorActions(root) {
   });
 }
 
-function toggleFilter(name) {
-  if (activeFilters.has(name)) activeFilters.delete(name);
-  else activeFilters.add(name);
+function toggleFilter(key) {
+  const group = filterGroupOf(key);
+  // 整组都开着才算「关掉」，否则一律补齐成全开 —— 父级半开时再点一下会全部亮起。
+  const allOn = group.every((member) => activeFilters.has(member));
+  for (const member of group) {
+    if (allOn) activeFilters.delete(member);
+    else activeFilters.add(member);
+  }
   render();
 }
 
@@ -1304,10 +1452,16 @@ function agendaItemHTML(event, date) {
     <div class="agenda-body">
       <div class="agenda-title">${eventTitleHTML(event)}</div>
       <div class="agenda-time">${isAllDayEvent(event) ? "All-day" : `${event.start} - ${event.end}`}${eventRelativeLabel(event, date) ? `<span class="event-relative"> · ${eventRelativeLabel(event, date)}</span>` : ""}${isOngoing(event, date) ? '<span class="now-badge">Now</span>' : ""}</div>
-      <span class="agenda-cat" style="color:${inkColor(event.color)}">${escapeHtml(event.cat)}</span>
+      <span class="agenda-cat" style="color:${inkColor(event.color)}">${escapeHtml(agendaCategoryLabel(event))}</span>
     </div>
     <button type="button" class="agenda-delete" data-delete-id="${event.id}" data-delete-title="${escapeAttr(event.title)}" data-series-id="${escapeAttr(event.seriesId || "")}">x</button>
   </div>`;
+}
+
+// agenda 行空间有限：有科目时只显示科目名，没有才显示分类名。
+function agendaCategoryLabel(event) {
+  const subject = event.subjectId ? getSubject(event.subjectId) : null;
+  return subject ? subject.name : event.cat;
 }
 
 function eventTitleHTML(event) {
@@ -1351,34 +1505,61 @@ function layoutDayEvents(events) {
   return withMin.map((event, i) => ({ ...event, col: col[i], cols: clusterMaxCol[cluster[i]] }));
 }
 
+// 只有 Academics 分类才展开科目行；「无科目」用中性色块表示学业但未指定科目。
+function subjectSwatchRowHtml(categoryName, currentSubjectId, attr) {
+  if (!isAcademicsCategory(categoryName)) return "";
+  const academics = academicsCategory();
+  const none = `<button type="button" class="swatch swatch-none ${currentSubjectId ? "" : "selected"}" style="background:${academics.color}" ${attr}="" title="No subject" aria-label="No subject"></button>`;
+  const items = subjects.map((subject) => `<button type="button" class="swatch ${subject.id === currentSubjectId ? "selected" : ""}" style="background:${subject.color}" ${attr}="${escapeAttr(subject.id)}" title="${escapeAttr(subject.name)}" aria-label="${escapeAttr(subject.name)}"></button>`).join("");
+  return `<div class="subject-swatches">${none}${items}</div>`;
+}
+
 function renderSwatches() {
   els.catSwatches.innerHTML = categories.map((cat) => `
     <button type="button" class="swatch ${cat.name === selectedCat ? "selected" : ""}" style="background:${cat.color}" data-cat="${escapeAttr(cat.name)}" title="${escapeAttr(cat.name)}"></button>
-  `).join("");
-  els.catSwatches.querySelectorAll(".swatch").forEach((button) => {
+  `).join("") + subjectSwatchRowHtml(selectedCat, selectedSubjectId, "data-subject");
+  els.catSwatches.querySelectorAll("[data-cat]").forEach((button) => {
     button.addEventListener("click", () => {
       selectedCat = button.dataset.cat;
+      if (!isAcademicsCategory(selectedCat)) selectedSubjectId = null;
+      renderSwatches();
+      renderEventTagPicker();
+    });
+  });
+  els.catSwatches.querySelectorAll("[data-subject]").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectedSubjectId = button.dataset.subject || null;
       renderSwatches();
       renderEventTagPicker();
     });
   });
 }
 
+// Academics 事项显示成「Academics / Math」，普通分类只显示分类名。
+function categoryLabel(item) {
+  const subject = item.subjectId ? getSubject(item.subjectId) : null;
+  return subject ? `${item.cat} / ${subject.name}` : item.cat;
+}
+
 function categoryIdForName(name) {
   return categories.find((category) => category.name === name)?.id || null;
 }
 
-function orderedTagsForCategory(categoryName) {
-  const categoryId = categoryIdForName(categoryName);
-  const suggested = new Set(tagSuggestions[categoryId] || []);
+// 标签建议的归属：Academics 选了科目时按科目，其余按分类。
+function suggestionOwnerId(categoryName, subjectId) {
+  if (subjectId && isAcademicsCategory(categoryName)) return subjectId;
+  return categoryIdForName(categoryName);
+}
+
+function orderedTagsForCategory(categoryName, subjectId = null) {
+  const suggested = new Set(tagSuggestions[suggestionOwnerId(categoryName, subjectId)] || []);
   return tags.slice()
     .sort((a, b) => Number(suggested.has(b.id)) - Number(suggested.has(a.id)) || a.sort_order - b.sort_order || a.name.localeCompare(b.name));
 }
 
-function tagPickerHtml(categoryName, selectedIds, expanded) {
-  const categoryId = categoryIdForName(categoryName);
-  const suggested = new Set(tagSuggestions[categoryId] || []);
-  const ordered = orderedTagsForCategory(categoryName);
+function tagPickerHtml(categoryName, selectedIds, expanded, subjectId = null) {
+  const suggested = new Set(tagSuggestions[suggestionOwnerId(categoryName, subjectId)] || []);
+  const ordered = orderedTagsForCategory(categoryName, subjectId);
   if (!ordered.length) return '<span class="tag-picker-empty">No tags available</span>';
   const visible = expanded ? ordered : ordered.slice(0, 6);
   const chips = visible.map((tag) => {
@@ -1397,7 +1578,7 @@ function toggleSelectedTag(selectedIds, id) {
 }
 
 function renderEventTagPicker() {
-  els.fTagPicker.innerHTML = tagPickerHtml(selectedCat, selectedTagIds, eventTagPickerExpanded);
+  els.fTagPicker.innerHTML = tagPickerHtml(selectedCat, selectedTagIds, eventTagPickerExpanded, selectedSubjectId);
   els.fTagPicker.querySelectorAll("[data-tag-id]").forEach((button) => button.addEventListener("click", () => {
     toggleSelectedTag(selectedTagIds, button.dataset.tagId);
     renderEventTagPicker();
@@ -1409,7 +1590,7 @@ function renderEventTagPicker() {
 }
 
 function renderDeadlineTagPicker() {
-  els.dTagPicker.innerHTML = tagPickerHtml(ddlSelectedCat, ddlSelectedTagIds, deadlineTagPickerExpanded);
+  els.dTagPicker.innerHTML = tagPickerHtml(ddlSelectedCat, ddlSelectedTagIds, deadlineTagPickerExpanded, ddlSelectedSubjectId);
   els.dTagPicker.querySelectorAll("[data-tag-id]").forEach((button) => button.addEventListener("click", () => {
     toggleSelectedTag(ddlSelectedTagIds, button.dataset.tagId);
     renderDeadlineTagPicker();
@@ -1474,6 +1655,7 @@ function prepareDeadlineForm(prefillIso) {
   els.dTime.value = "18:00";
   els.dAllday.checked = false;
   ddlSelectedCat = selectedCat || categories[0]?.name || FALLBACK_CATEGORY.name;
+  ddlSelectedSubjectId = isAcademicsCategory(ddlSelectedCat) ? selectedSubjectId : null;
   ddlPriority = "default";
   ddlSelectedTagIds = new Set();
   deadlineTagPickerExpanded = false;
@@ -1486,9 +1668,16 @@ function prepareDeadlineForm(prefillIso) {
 }
 
 function renderDdlSwatches() {
-  els.dCatSwatches.innerHTML = categories.map((category) => `<button type="button" class="swatch ${category.name === ddlSelectedCat ? "selected" : ""}" style="background:${category.color}" data-ddl-cat="${escapeAttr(category.name)}" title="${escapeAttr(category.name)}" aria-label="${escapeAttr(category.name)}"></button>`).join("");
+  els.dCatSwatches.innerHTML = categories.map((category) => `<button type="button" class="swatch ${category.name === ddlSelectedCat ? "selected" : ""}" style="background:${category.color}" data-ddl-cat="${escapeAttr(category.name)}" title="${escapeAttr(category.name)}" aria-label="${escapeAttr(category.name)}"></button>`).join("")
+    + subjectSwatchRowHtml(ddlSelectedCat, ddlSelectedSubjectId, "data-ddl-subject");
   els.dCatSwatches.querySelectorAll("[data-ddl-cat]").forEach((button) => button.addEventListener("click", () => {
     ddlSelectedCat = button.dataset.ddlCat;
+    if (!isAcademicsCategory(ddlSelectedCat)) ddlSelectedSubjectId = null;
+    renderDdlSwatches();
+    renderDeadlineTagPicker();
+  }));
+  els.dCatSwatches.querySelectorAll("[data-ddl-subject]").forEach((button) => button.addEventListener("click", () => {
+    ddlSelectedSubjectId = button.dataset.ddlSubject || null;
     renderDdlSwatches();
     renderDeadlineTagPicker();
   }));
@@ -1504,12 +1693,16 @@ function toggleDdlAllDay() {
   const disabled = els.dAllday.checked;
   els.dTimeField.style.opacity = disabled ? "0.35" : "1";
   els.dTimeField.style.pointerEvents = disabled ? "none" : "auto";
+  els.dTime.disabled = disabled;
+  validateDeadlineTime();
 }
 
 async function submitDeadline(event) {
   event.preventDefault();
   const title = els.dTitle.value.trim();
-  if (!title || !els.dDate.value) return;
+  if (!title) return showFormValidation("Enter a deadline title.");
+  if (!els.dDate.value) return showFormValidation("Choose a due date.");
+  if (!validateDeadlineTime()) return showFormValidation("Enter a valid 24-hour due time (00:00–23:59).");
   const allDay = els.dAllday.checked;
   const category = getCategory(ddlSelectedCat);
   const due_time = allDay ? els.dDate.value : toLocalIso(parseDateKey(els.dDate.value), els.dTime.value || "18:00");
@@ -1517,7 +1710,7 @@ async function submitDeadline(event) {
   try {
     await apiFetch("/api/deadlines", {
       method: "POST",
-      body: JSON.stringify({ title, due_time, all_day: allDay, category: category.name, color: "default", priority: ddlPriority, tag_ids: [...ddlSelectedTagIds], source: "web" }),
+      body: JSON.stringify({ title, due_time, all_day: allDay, category: category.name, subject_id: ddlSelectedSubjectId, color: "default", priority: ddlPriority, tag_ids: [...ddlSelectedTagIds], source: "web" }),
     });
     selectedDate = parseDateKey(els.dDate.value);
     viewDate = parseDateKey(els.dDate.value);
@@ -1532,15 +1725,17 @@ async function submitDeadline(event) {
 }
 
 function closeModal() {
+  closeFormValidation();
   els.eventScrim.classList.remove("open");
 }
 
 async function submitEvent(event) {
   event.preventDefault();
-  if (!validateTimes()) return;
   const date = els.fDate.value;
   const title = els.fTitle.value.trim();
-  if (!title) return;
+  if (!title) return showFormValidation("Enter an event title.");
+  if (!date) return showFormValidation("Choose an event date.");
+  if (!validateTimes()) return showFormValidation(els.timeError.textContent || "Enter valid 24-hour event times.");
   const repeat = getRepeatConfig();
   if (repeat.error) {
     showRepeatError(repeat.error);
@@ -1562,7 +1757,8 @@ async function submitEvent(event) {
     end_time: toLocalIso(parseDateKey(date), end),
     all_day: allDay,
     category: category.name,
-    color: category.color,
+    subject_id: selectedSubjectId,
+    // color 不写具体值：事项跟随分类 / 科目的当前颜色，改配色时旧数据一起变。
     source: "web",
     tag_ids: [...selectedTagIds],
     ...(!allDay ? { reminders: reminderValues } : {}),
@@ -1718,7 +1914,7 @@ function renderEventDetail(row) {
   els.detailCatDot.style.background = event.color;
   els.detailTitle.textContent = event.title;
   const rows = [
-    detailRow("Category", `<span class="detail-cat-dot" style="background:${event.color};display:inline-block;vertical-align:middle;margin-right:6px"></span>${escapeHtml(event.cat)}`),
+    detailRow("Category", `<span class="detail-cat-dot" style="background:${event.color};display:inline-block;vertical-align:middle;margin-right:6px"></span>${escapeHtml(categoryLabel(event))}`),
     detailRow("Date", escapeHtml(dateText)),
     detailRow("Time", escapeHtml(timeText)),
   ];
@@ -1749,7 +1945,7 @@ function renderDeadlineDetail(row) {
   els.detailCatDot.style.background = deadline.color;
   els.detailTitle.textContent = deadline.title;
   const rows = [
-    detailRow("Category", `<span class="detail-cat-dot" style="background:${deadline.color};display:inline-block;vertical-align:middle;margin-right:6px"></span>${escapeHtml(deadline.cat)}`),
+    detailRow("Category", `<span class="detail-cat-dot" style="background:${deadline.color};display:inline-block;vertical-align:middle;margin-right:6px"></span>${escapeHtml(categoryLabel(deadline))}`),
     detailRow("Priority", `<span class="pri-tag pri-${deadline.priority}" style="--ddl-color:${deadline.color}">${escapeHtml(deadline.priority)}</span>`),
     detailRow("Due", escapeHtml(dueText)),
     detailRow("Status", `<span class="detail-status ${statusClass}">${statusText}</span>`),
@@ -1776,8 +1972,10 @@ function toggleAllDayFields() {
   const isAllDay = els.fAllday.checked;
   els.timeFields.style.opacity = isAllDay ? "0.35" : "1";
   els.timeFields.style.pointerEvents = isAllDay ? "none" : "auto";
+  els.fStart.disabled = isAllDay;
+  els.fEnd.disabled = isAllDay;
   els.reminderFields.hidden = isAllDay;
-  validateTimes();
+  previewTimeOrder();
 }
 
 function validateTimes() {
@@ -1785,21 +1983,61 @@ function validateTimes() {
     hideTimeError();
     return true;
   }
+  if (!isValid24HourTime(els.fStart.value) || !isValid24HourTime(els.fEnd.value)) {
+    showTimeError("Enter valid 24-hour times (00:00–23:59).");
+    return false;
+  }
   const start = timeToMin(els.fStart.value || "00:00");
   const end = timeToMin(els.fEnd.value || "00:00");
   if (end <= start) {
-    showTimeError();
+    showTimeError("End time must be after start time.");
     return false;
   }
   hideTimeError();
   return true;
 }
 
-function showTimeError() {
+function previewTimeOrder() {
+  if (els.fAllday.checked || !isValid24HourTime(els.fStart.value) || !isValid24HourTime(els.fEnd.value)) {
+    hideTimeError();
+    return;
+  }
+  if (timeToMin(els.fEnd.value) <= timeToMin(els.fStart.value)) {
+    showTimeError("End time must be after start time.", { scroll: false });
+    return;
+  }
+  hideTimeError();
+}
+
+function validateDeadlineTime() {
+  if (els.dAllday.checked || isValid24HourTime(els.dTime.value)) {
+    els.dTime.setCustomValidity("");
+    els.dTimeError.classList.remove("show");
+    els.dTime.style.borderColor = "";
+    return true;
+  }
+  els.dTime.setCustomValidity("Enter a valid 24-hour time (00:00–23:59).");
+  els.dTimeError.classList.add("show");
+  els.dTime.style.borderColor = "#FF3B30";
+  return false;
+}
+
+function showTimeError(message, { scroll = true } = {}) {
   const wasShown = els.timeError.classList.contains("show");
+  els.timeError.textContent = message;
   els.timeError.classList.add("show");
   els.fEnd.style.borderColor = "#FF3B30";
-  if (!wasShown) els.timeError.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  if (scroll && !wasShown) els.timeError.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function showFormValidation(message) {
+  els.formValidationMessage.textContent = message;
+  els.formValidationScrim.classList.add("open");
+  setTimeout(() => els.formValidationClose.focus(), 0);
+}
+
+function closeFormValidation() {
+  els.formValidationScrim.classList.remove("open");
 }
 
 function hideTimeError() {
@@ -1967,7 +2205,7 @@ function getEventsFor(date) {
 }
 
 function matchesFilters(item) {
-  if (!activeFilters.has(item.cat)) return false;
+  if (!activeFilters.has(item.filterKey || filterKeyOf(item.cat, item.subjectId || null))) return false;
   return activeTagFilters.size === 0 || (item.tags || []).some((tag) => activeTagFilters.has(tag.id));
 }
 
@@ -2078,7 +2316,7 @@ function deadlineItemHTML(deadline) {
     <div class="ddl-item-bar"></div>
     <div class="ddl-item-main">
       <div class="ddl-item-title" title="${escapeAttr(deadline.title)}">⚑ ${escapeHtml(deadline.title)}</div>
-      <div class="ddl-item-meta"><span class="ddl-meta-main"><span class="pri-tag pri-${deadline.priority}">${deadline.priority}</span>${deadlineDueText(deadline)}</span><span class="ddl-meta-category" title="${escapeAttr(deadline.cat)}">${escapeHtml(deadline.cat)}</span></div>
+      <div class="ddl-item-meta"><span class="ddl-meta-main"><span class="pri-tag pri-${deadline.priority}">${deadline.priority}</span>${deadlineDueText(deadline)}</span><span class="ddl-meta-category" title="${escapeAttr(categoryLabel(deadline))}">${escapeHtml(categoryLabel(deadline))}</span></div>
     </div>
     <span class="ddl-item-action">${statusClass === "done" ? "Reopen" : "Complete"}</span>
   </div>`;
@@ -2091,9 +2329,11 @@ function ddlRailHTML() {
   const visible = active.slice(0, 3);
   const more = active.length - visible.length;
   return `<div class="ddl-rail"><div class="ddl-rail-head"><span>Due soon</span><span>${sameDay(selectedDate, today()) ? "by priority" : `relative to ${pad2(selectedDate.getMonth() + 1)}.${pad2(selectedDate.getDate())}`}</span></div>
+    <div class="ddl-rail-body">
     <div class="ddl-list">${visible.length ? visible.map(deadlineItemHTML).join("") : (completed.length ? "" : '<div class="inspector-empty">Nothing due soon.</div>')}</div>
     ${more > 0 ? `<button type="button" class="ddl-more" data-open-quick>+${more} more</button>` : ""}
     ${completed.length ? `<details class="ddl-completed"><summary>${completed.length} completed</summary><div class="ddl-list">${completed.map(deadlineItemHTML).join("")}</div></details>` : ""}
+    </div>
   </div>`;
 }
 
@@ -2236,6 +2476,10 @@ function startOfWeek(date) {
 function timeToMin(time) {
   const [h, m] = String(time || "00:00").split(":").map(Number);
   return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+}
+
+function isValid24HourTime(time) {
+  return /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(String(time || ""));
 }
 
 function timeFromIso(iso, fallback) {
@@ -2564,8 +2808,9 @@ function setLoading(isLoading) {
     _close() {
       const id = this.scrim.id;
       const map = {
-        eventScrim: closeModal, confirmScrim: closeConfirm, completeScrim: closeComplete,
+        eventScrim: closeModal, formValidationScrim: closeFormValidation, confirmScrim: closeConfirm, completeScrim: closeComplete,
         reopenScrim: closeReopen, detailScrim: closeDetail, notificationsScrim: closeNotifications,
+        subscriptionsScrim: closeSubscriptions,
       };
       const fn = map[id];
       if (fn) fn(); else this.scrim.classList.remove("open");

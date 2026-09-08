@@ -1,5 +1,5 @@
 // /api/events
-//   GET  列出事件（支持 from / to / category 过滤，默认排除软删除）
+//   GET  列出事件（支持 from / to / category / subject_id 过滤，默认排除软删除）
 //   POST 创建事件（服务器生成 id / created_at / updated_at）
 
 import { queryAll, batch } from "../../_lib/db.js";
@@ -10,10 +10,12 @@ import {
   rowToEvent,
   nowIso,
   toIntBool,
+  normalizeEventColor,
 } from "../../_lib/events.js";
 import { configStatement, effectiveEventReminders, eventReminderStatements, requestedReminders } from "../../_lib/reminders.js";
 import { attachTagsToEvents, ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../../_lib/tags.js";
 import { ensureCategoryExists } from "../../_lib/categories.js";
+import { validateCategorySubject } from "../../_lib/subjects.js";
 
 // GET /api/events?from=&to=&category=
 export async function onRequestGet(context) {
@@ -22,6 +24,7 @@ export async function onRequestGet(context) {
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");
   const category = url.searchParams.get("category");
+  const subjectId = url.searchParams.get("subject_id");
   const tagIds = url.searchParams.getAll("tag").filter(Boolean);
   if (new Set(tagIds).size !== tagIds.length) return error("validation_error", "tag query parameters must not contain duplicates", 400);
 
@@ -40,6 +43,10 @@ export async function onRequestGet(context) {
   if (category) {
     sql += " AND category = ?";
     params.push(category);
+  }
+  if (subjectId) {
+    sql += " AND subject_id = ?";
+    params.push(subjectId);
   }
   if (tagIds.length) {
     const placeholders = tagIds.map(() => "?").join(", ");
@@ -75,6 +82,8 @@ export async function onRequestPost(context) {
   if (temporalMsg) return error("validation_error", temporalMsg, 400);
   const categoryMessage = await ensureCategoryExists(env, body.category);
   if (categoryMessage) return error("validation_error", categoryMessage, 400);
+  const subjectMessage = await validateCategorySubject(env, body.category, body.subject_id);
+  if (subjectMessage) return error("validation_error", subjectMessage, 400);
   const reminderRequest = requestedReminders(body, toIntBool(body.all_day) === 1);
   if (reminderRequest.error) return error("validation_error", reminderRequest.error, 400);
   const tagMessage = body.tag_ids === undefined ? null : validateTagIds(body.tag_ids);
@@ -95,7 +104,8 @@ export async function onRequestPost(context) {
     end_time: body.end_time ?? null,
     all_day: toIntBool(body.all_day),
     category: body.category ?? null,
-    color: body.color ?? null,
+    subject_id: body.subject_id || null,
+    color: normalizeEventColor(body.color) ?? null,
     group_title: body.group_title ?? null,
     source: body.source ?? "web",
     external_id: body.external_id ?? null,
@@ -105,9 +115,9 @@ export async function onRequestPost(context) {
   };
 
   const statements = [env.DB.prepare(`INSERT INTO events
-       (id, title, description, start_time, end_time, all_day, category, color,
+       (id, title, description, start_time, end_time, all_day, category, subject_id, color,
         group_title, source, external_id, created_at, updated_at, deleted_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(
       event.id,
       event.title,
@@ -116,6 +126,7 @@ export async function onRequestPost(context) {
       event.end_time,
       event.all_day,
       event.category,
+      event.subject_id,
       event.color,
       event.group_title,
       event.source,

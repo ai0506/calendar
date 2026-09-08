@@ -16,6 +16,7 @@ import { nowIso } from "../../_lib/events.js";
 import { cancelTargetStatement, deadlineReminderStatements } from "../../_lib/reminders.js";
 import { ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../../_lib/tags.js";
 import { ensureCategoryExists } from "../../_lib/categories.js";
+import { subjectIdAfterCategoryChange, validateCategorySubject } from "../../_lib/subjects.js";
 
 export async function onRequestGet(context) {
   const row = await activeDeadline(context.env, context.params.id);
@@ -48,6 +49,13 @@ export async function onRequestPut(context) {
   const categoryMessage = await ensureCategoryExists(env, merged.category);
   if (categoryMessage) return error("validation_error", categoryMessage, 400);
   const input = normalizeDeadlineInput(body);
+  // 分类改成普通分类时清空 subject_id；先降级再校验，否则「只改分类」会被旧 subject 判非法。
+  if (body.category !== undefined && body.subject_id === undefined) {
+    merged.subject_id = await subjectIdAfterCategoryChange(env, merged.category, existing.subject_id);
+    if (merged.subject_id !== existing.subject_id) input.subject_id = merged.subject_id;
+  }
+  const subjectMessage = await validateCategorySubject(env, merged.category, merged.subject_id);
+  if (subjectMessage) return error("validation_error", subjectMessage, 400);
   const sets = [];
   const values = [];
   for (const field of deadlineFields()) {

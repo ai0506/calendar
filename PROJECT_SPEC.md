@@ -77,8 +77,9 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 | end_time | TEXT | 结束时间，ISO 8601 带时区偏移 |
 | all_day | INTEGER | 全天事件标记，0/1 |
 | category | TEXT | 分类名称；必须是 `categories.name` 中已存在的值，服务端在写入前校验（非法值返回 `validation_error`），不允许调用方凭空创建分类名 |
-| color | TEXT | 颜色（覆盖分类默认色，可选） |
-| group_title | TEXT | 分组标题（未来合并显示课程用） |
+| subject_id | TEXT | 科目 id（可选）；只有当 `category` 是 `kind = 'academics'` 的分类时才允许非空，见下方 subjects |
+| color | TEXT | 事项显式颜色（可选）。NULL 表示跟随分类 / 科目颜色 —— 写入路径不会把当时的分类色快照进来 |
+| group_title | TEXT | 分组标题 |
 | source | TEXT | 来源，默认 `web`（`web` / `agent` / `import` 等） |
 | external_id | TEXT | 外部唯一标识，用于导入去重 |
 | series_id | TEXT | 所属重复事件系列；普通事件为 NULL |
@@ -101,10 +102,42 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 | color | TEXT NOT NULL | 颜色 |
 | sort_order | INTEGER | 排序 |
 | created_at | TEXT | 创建时间 |
+| kind | TEXT NOT NULL | `normal` 或 `academics`；`academics` 是唯一拥有 Subject 子类的特殊分类 |
+| archived | INTEGER NOT NULL | 1 表示历史分类：不再列出、不接受新写入，但保留行以便旧数据和旧订阅 URL 可读 |
 
-种子分类：Math / Physics / CS / Other Subjects / Research / Projects / Leisure / Tech，各配不同颜色。分类系统保持简单，方便以后扩展。
+当前分类：Academics（`kind = 'academics'`）/ Research / Projects / Leisure / Tech。
+迁移 0012 之前，Math / Physics / CS / Other Subjects 是四个独立分类；它们已被合并进
+Academics，原分类行标记为 `archived = 1` 保留。
 
-`category` 字段没有数据库外键约束，但 Event / Deadline / Event Series 的所有写路径（REST 与 MCP）都会在写入前校验 `category` 是否存在于 `categories.name`，防止调用方（尤其是 AI Agent）凭空写入未注册的分类名。新增分类只能通过 `POST /api/categories`（暂无对应 MCP 工具）；Agent 应先用 `calendar_list_categories` 确认没有合适的现有分类，再请用户通过网页端创建。
+### subjects
+Subject 是 Academics 专属的子类（学科）。Category 表示「日程的组织范围」，
+Subject 表示「学业事项属于哪一门科」，两者不再混用同一个字段。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | TEXT PK | 科目 id |
+| name | TEXT UNIQUE NOT NULL | 科目名 |
+| category_id | TEXT NOT NULL | 所属分类，必须是 `kind = 'academics'` 的分类 |
+| color | TEXT NOT NULL | 科目颜色 |
+| sort_order | INTEGER | 排序 |
+| active | INTEGER NOT NULL | 0 表示停用：不再出现在选择器，但旧数据仍可读 |
+| created_at / updated_at | TEXT | 时间戳 |
+
+当前科目：Math / Physics / CS / English / Other Subjects。
+
+**分类与科目的联动规则**（REST、MCP、Import 共用 `_lib/subjects.js` 的同一套校验）：
+
+```text
+category.kind = 'normal'                  → subject_id 必须为空
+category.kind = 'academics' + subject_id  → subject 必须属于该分类且处于启用状态
+category.kind = 'academics' + 无 subject  → 合法，表示学业但未指定科目
+```
+
+**颜色解析优先级**：事项显式 `color` > Subject 颜色 > Category 颜色。
+`color` 为 NULL 或 `"default"` 都表示「跟随分类 / 科目」，因此改分类或科目配色时
+旧数据会一起变色。写入路径不再把分类色快照成事项的显式颜色。
+
+`category` 字段没有数据库外键约束，但 Event / Deadline / Event Series 的所有写路径（REST 与 MCP）都会在写入前校验 `category` 是否存在于 `categories.name` 且未归档，防止调用方（尤其是 AI Agent）凭空写入未注册的分类名。新增分类只能通过 `POST /api/categories`（暂无对应 MCP 工具）；新增科目通过 `POST /api/subjects`。Agent 应先用 `calendar_list_categories` / `calendar_list_subjects` 确认没有合适的现有项，再请用户通过网页端创建。
 
 ### event_series
 
@@ -140,10 +173,32 @@ Event 支持最多两个预设提醒；全天 Event 固定在上海时间当天 
 
 `functions/_middleware.js` 是唯一的鉴权入口，保护 `/api/*`（登录接口除外）；接受有效 Cookie **或** 有效 Bearer Token，两条代码路径分离、各自记录。
 
+### Category / Subject 是底层语义，不开放给 AI
+
+Category 和 Subject 决定了 Event / Deadline 的组织方式与颜色解析，属于**底层数据语义**，
+一旦被随手创建就会污染全局并很难回收。因此：
+
+- **MCP 不提供**创建 / 修改 / 删除 Category 或 Subject 的工具，只提供只读的
+  `calendar_list_categories` 与 `calendar_list_subjects`；
+- 新增分类或科目只能由**本人在网页端**完成（`POST /api/categories` / `POST /api/subjects`，
+  凭登录会话 Cookie）。
+
+这条边界不是靠「没提供工具」维持的，而是鉴权层面的硬隔离：`isAuthenticated()`
+只认 `API_TOKEN` 与签名会话 Cookie，**不认 OAuth access token**，而 MCP 走独立的
+`/mcp` 端点 + OAuth 校验、不经过 `_middleware.js`。因此 MCP 客户端持有的凭证在
+REST 侧根本不成立，拿 MCP token 打 `POST /api/subjects` 返回 401。
+
+⚠️ 例外是 `API_TOKEN`：它是全权令牌，能过 `_middleware.js`，因而也能写 Category /
+Subject。它是发给 Android / macOS 客户端的，**不要把它交给 AI Agent**——一旦交出，
+这条边界即失效。
+
+后续给 MCP 加工具时必须守住这条线：不要因为「AI 想建个科目」就开一个写工具。
+
 ### 密钥（环境变量，禁止硬编码 / 禁止提交 GitHub）
 - `PASSWORD` — 私人登录密码
 - `API_TOKEN` — Agent / App 访问令牌
 - `SESSION_SECRET` — Cookie 签名密钥
+- `ICS_SUBSCRIPTION_TOKEN` — Apple Calendar 只读订阅链接密钥；至少 32 个随机字符，轮换后旧订阅链接立即失效
 
 本地放 `.dev.vars`（已 gitignore），生产放 Cloudflare Pages 环境变量。
 
@@ -167,4 +222,4 @@ Event 支持最多两个预设提醒；全天 Event 固定在上海时间当天 
 
 ## 9. 后续规划（非本阶段）
 
-Days Matter 倒计时、天气卡片、课表系统（自动生成学期课程、折叠显示）、Android App（Flutter，复用同一 API）。
+Days Matter 倒计时、天气卡片、课表系统（独立的课程层，只读投影到日历视图，**不写入 events**，见 production/COURSE_SCHEDULE_PLAN.md）、Android App（Flutter，复用同一 API）。

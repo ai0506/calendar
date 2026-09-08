@@ -19,6 +19,7 @@
 import { queryAll, queryOne, run, batch } from "../_lib/db.js";
 import { attachTagsToDeadlines, attachTagsToEvents, ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../_lib/tags.js";
 import { ensureCategoryExists } from "../_lib/categories.js";
+import { listSubjects, subjectIdAfterCategoryChange, validateCategorySubject } from "../_lib/subjects.js";
 import { safeEqual } from "../_lib/auth.js";
 import {
   verifyAccessToken,
@@ -95,7 +96,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version",
 };
 
-// 可被 calendar_update_event 更新的字段（与 PUT /api/events/:id 保持一致；id/created_at 不可改）
+// 可被 calendar_update（type=event）更新的字段（与 PUT /api/events/:id 保持一致；id/created_at 不可改）
 const UPDATABLE = [
   "title",
   "description",
@@ -103,6 +104,7 @@ const UPDATABLE = [
   "end_time",
   "all_day",
   "category",
+  "subject_id",
   "color",
   "group_title",
   "source",
@@ -114,9 +116,21 @@ const UPDATABLE = [
 // category 必须引用 categories 表中已存在的名字（外键式约束由服务端校验，非法值返回 validation_error）。
 // MCP 未提供创建分类的工具，调用前应先 calendar_list_categories 确认可用名字，不要凭空编造。
 const CATEGORY_DESCRIPTION =
-  "分类名（可选）。必须是 calendar_list_categories 返回的已存在分类之一，如 Physics；" +
+  "分类名（可选）。必须是 calendar_list_categories 返回的已存在分类之一，如 Academics、Research；" +
   "传入未注册的分类名会被拒绝（validation_error）。MCP 没有创建分类的工具，" +
-  "确实需要新分类时请先用 calendar_list_categories 确认没有再匹配的，再让用户通过网页端 POST /api/categories 创建。";
+  "确实需要新分类时请先用 calendar_list_categories 确认没有再匹配的，再让用户通过网页端 POST /api/categories 创建。" +
+  "学业事项统一用 kind=\"academics\" 的那个分类（当前是 Academics），具体科目放在 subject_id。";
+
+// MCP 不暴露 color：事项颜色由分类 / 科目决定（见 migration 0012 的两级配色）。
+// AI 一旦显式写死颜色，那条事项就永久脱离配色体系、日后改科目色对它不生效。
+// 服务端仍保留 color 的处理逻辑 —— 未声明的参数服务端并不拦截，REST 与导入
+// 路径也还在用，所以留着比删掉安全。
+//
+// Subject 是 academics 分类专属的子类（学科）。非 academics 分类不接受 subject_id。
+const SUBJECT_DESCRIPTION =
+  "科目 id（可选）。只有当 category 是 kind=\"academics\" 的分类时才允许传；" +
+  "必须是 calendar_list_subjects 返回的 id，如 sub-math。普通分类传 subject_id 会被拒绝。" +
+  "学业事项但说不清是哪一科时留空即可。";
 
 const EVENT_WRITE_PROPERTIES = {
   title: { type: "string", description: "标题" },
@@ -128,13 +142,7 @@ const EVENT_WRITE_PROPERTIES = {
   end_time: { type: "string", description: "结束时间，ISO 8601 带时区偏移（可选）" },
   all_day: { type: "boolean", description: "是否全天事件（可选，默认 false）" },
   category: { type: "string", description: CATEGORY_DESCRIPTION },
-  color: {
-    type: "string",
-    description:
-      "颜色 hex（如 #3b82f6），或字符串 \"default\" 表示跟随所属分类的颜色（可选）。" +
-      "不确定用什么颜色时优先用 \"default\"，会自动采用 category 的颜色。",
-  },
-  group_title: { type: "string", description: "分组标题（可选）" },
+  subject_id: { type: ["string", "null"], description: SUBJECT_DESCRIPTION },
   tag_ids: { type: "array", items: { type: "string" }, maxItems: 5, description: "可选，全局标签 ID；传空数组清空标签。" },
   reminders: {
     type: "array", items: { type: "integer", enum: [10, 15, 30, 60, 120, 1440] }, maxItems: 2,
@@ -148,13 +156,52 @@ const DEADLINE_WRITE_PROPERTIES = {
   due_time: { type: "string", description: "截止日期 YYYY-MM-DD，或带时区的 ISO 8601 时间" },
   all_day: { type: "boolean", description: "是否全天截止事项；全天时 due_time 必须为 YYYY-MM-DD" },
   category: { type: "string", description: CATEGORY_DESCRIPTION },
-  color: { type: "string", description: "六位 hex 颜色、default 或 null（可选）" },
-  group_title: { type: "string", description: "分组标题（可选）" },
+  subject_id: { type: ["string", "null"], description: SUBJECT_DESCRIPTION },
   priority: { type: "string", enum: ["high", "default", "low"], description: "重要程度，默认 default" },
   source: { type: "string", description: "来源（创建时可选）" },
   external_id: { type: "string", description: "外部唯一标识（创建时可选）" },
   tag_ids: { type: "array", items: { type: "string" }, maxItems: 5, description: "可选，全局标签 ID；传空数组清空标签。" },
 };
+
+// source / external_id 是导入去重用的，创建后不可改（runUpdateDeadline 会拒）。
+// 所以更新工具不能公布它们 —— 公布一个必然失败的参数，只会诱导 AI 白跑一趟。
+const { source: _deadlineSource, external_id: _deadlineExternalId, ...DEADLINE_UPDATE_PROPERTIES } =
+  DEADLINE_WRITE_PROPERTIES;
+
+// Event 与 Deadline 的更新/删除形状高度重合，合成一个带 type 判别参数的工具：
+// 六个写工具里 update 与 delete 这两对的 required 不会因为合并而丢信息
+// （都是 [id] → [id, type]），所以合并是纯赚。create 没有合并 —— 那对的
+// required 是 [title, start_time] / [title, due_time]，合并后时间字段会从
+// 必填掉出去，只能靠描述文字兜底，代价太大。
+const TARGET_TYPE_PROPERTY = {
+  type: "string",
+  enum: ["event", "deadline"],
+  description: "目标类型：event（时间段事件）或 deadline（截止事项）。必填，决定哪些字段可用。",
+};
+
+const UPDATE_PROPERTIES = {
+  type: TARGET_TYPE_PROPERTY,
+  id: { type: "string", description: "要修改的 event 或 deadline 的 id" },
+  title: { type: "string", description: "标题" },
+  description: { type: "string", description: "描述（可选）" },
+  all_day: { type: "boolean", description: "是否全天（可选）" },
+  category: { type: "string", description: CATEGORY_DESCRIPTION },
+  subject_id: { type: ["string", "null"], description: SUBJECT_DESCRIPTION },
+  tag_ids: { type: "array", items: { type: "string" }, maxItems: 5, description: "可选，全局标签 ID；传空数组清空标签。" },
+  start_time: { type: "string", description: "【仅 type=event】开始时间，ISO 8601 带时区偏移" },
+  end_time: { type: "string", description: "【仅 type=event】结束时间，ISO 8601 带时区偏移" },
+  reminders: {
+    type: "array", items: { type: "integer", enum: [10, 15, 30, 60, 120, 1440] }, maxItems: 2,
+    description: "【仅 type=event】开始前提醒分钟数；最多两个，空数组关闭提醒。",
+  },
+  due_time: { type: "string", description: "【仅 type=deadline】截止日期 YYYY-MM-DD 或带时区的 ISO 8601 时间" },
+  priority: { type: "string", enum: ["high", "default", "low"], description: "【仅 type=deadline】重要程度" },
+};
+
+// 跨类型串味的参数在运行时挡掉：schema 表达不了「type=event 时不许出现 priority」，
+// 而服务端本来也不校验未声明参数，所以这层必须自己写。
+const EVENT_ONLY_FIELDS = ["start_time", "end_time", "reminders"];
+const DEADLINE_ONLY_FIELDS = ["due_time", "priority"];
 
 const DEADLINE_OUTPUT_PROPERTIES = {
   id: { type: "string" },
@@ -163,6 +210,7 @@ const DEADLINE_OUTPUT_PROPERTIES = {
   due_time: { type: "string" },
   all_day: { type: "boolean" },
   category: { type: ["string", "null"] },
+  subject_id: { type: ["string", "null"] },
   color: { type: ["string", "null"] },
   group_title: { type: ["string", "null"] },
   priority: { type: "string", enum: ["high", "default", "low"] },
@@ -200,7 +248,8 @@ const TOOLS = [
           type: "string",
           description: "结束时间，ISO 8601 带时区偏移；例如 2026-08-13T23:59:59+08:00。过滤 start_time <= to。",
         },
-        category: { type: "string", description: "按分类名精确过滤，如 Physics。" },
+        category: { type: "string", description: "按分类名精确过滤，如 Academics。" },
+        subject_id: { type: "string", description: "按科目 id 精确过滤，如 sub-math（可选）。" },
         tag_ids: { type: "array", items: { type: "string" }, maxItems: 5, description: "可选；同时拥有全部指定标签的 Event（AND）。" },
       },
       additionalProperties: false,
@@ -208,9 +257,41 @@ const TOOLS = [
   },
   {
     name: "calendar_list_categories",
-    description: "【只读】列出全部分类，按 sort_order、name 升序返回。",
+    description:
+      "【只读】列出全部可用分类，按 sort_order、name 升序返回；已归档的历史分类不在其中。" +
+      "返回的 kind 字段区分分类类型：kind=\"academics\" 的分类拥有科目子类（用 calendar_list_subjects 取），" +
+      "写学业事项时把科目放进 subject_id；kind=\"normal\" 的分类没有科目，传 subject_id 会被拒绝。",
     annotations: { readOnlyHint: true },
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "calendar_list_subjects",
+    description: "【只读】列出 academics 分类下的科目（Subject），按 sort_order、name 升序返回；写入学业事项时把返回的 id 放进 subject_id。默认只返回启用中的科目。",
+    annotations: { readOnlyHint: true },
+    inputSchema: { type: "object", properties: {
+      include_inactive: { type: "boolean", description: "是否包含已停用的科目，默认 false" },
+    }, additionalProperties: false },
+    outputSchema: {
+      type: "object",
+      properties: {
+        subjects: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              name: { type: "string" },
+              category_id: { type: "string" },
+              color: { type: "string" },
+              sort_order: { type: "number" },
+              active: { type: "number" },
+            },
+            required: ["id", "name", "category_id", "color"],
+          },
+        },
+      },
+      required: ["subjects"],
+    },
   },
   {
     name: "calendar_list_tags",
@@ -226,6 +307,7 @@ const TOOLS = [
       from: { type: "string", description: "起始日期 YYYY-MM-DD（可选）" },
       to: { type: "string", description: "结束日期 YYYY-MM-DD（可选）" },
       category: { type: "string", description: "分类名（可选）" },
+      subject_id: { type: "string", description: "科目 id（可选）" },
       tag_ids: { type: "array", items: { type: "string" }, maxItems: 5, description: "可选；同时拥有全部指定标签的 Deadline（AND）。" },
       include_completed: { type: "boolean", description: "是否包含已完成项，默认 true" },
     }, additionalProperties: false },
@@ -245,17 +327,17 @@ const TOOLS = [
     outputSchema: DEADLINE_OUTPUT_SCHEMA,
   },
   {
-    name: "calendar_update_deadline",
-    description: "【需写权限】修改截止事项；source 和 external_id 创建后不可修改，只传需要修改的字段。",
-    annotations: { readOnlyHint: false },
-    inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" }, ...DEADLINE_WRITE_PROPERTIES }, required: ["id"], additionalProperties: false },
-    outputSchema: DEADLINE_OUTPUT_SCHEMA,
-  },
-  {
-    name: "calendar_delete_deadline",
-    description: "【需写权限】软删除一个截止事项。",
+    name: "calendar_delete",
+    description:
+      "【需写权限】软删除一个 event 或 deadline（设置 deleted_at，不物理删除），用 type 指定目标类型。" +
+      "同时会取消该对象上尚未发送的提醒。删除整个重复系列请用 calendar_delete_event_series。",
     annotations: { readOnlyHint: false, destructiveHint: true },
-    inputSchema: { type: "object", properties: { id: { type: "string", description: "截止事项 id" } }, required: ["id"], additionalProperties: false },
+    inputSchema: {
+      type: "object",
+      properties: { type: TARGET_TYPE_PROPERTY, id: { type: "string", description: "要删除的 event 或 deadline 的 id" } },
+      required: ["type", "id"],
+      additionalProperties: false,
+    },
     outputSchema: {
       type: "object",
       properties: { id: { type: "string" }, deleted: { type: "boolean" } },
@@ -291,27 +373,31 @@ const TOOLS = [
     },
   },
   {
-    name: "calendar_update_event",
+    name: "calendar_update",
     description:
-      "【需写权限】更新指定 id 的事件（仅更新提供的字段）。若改了 category 且未显式指定 color，" +
-      "会自动继承该分类颜色。updated_at 由服务器刷新。",
+      "【需写权限】更新一个 event 或 deadline（仅更新提供的字段），用 type 指定目标类型。" +
+      "带【仅 type=…】标注的字段只对该类型有效，用错类型会被拒绝。" +
+      "改了 category 而没给新科目时，颜色会自动跟随新分类/科目。updated_at 由服务器刷新。" +
+      "创建请用 calendar_create_event / calendar_create_deadline —— 两者必填的时间字段不同，没有合并。",
     annotations: { readOnlyHint: false },
     inputSchema: {
       type: "object",
-      properties: { id: { type: "string", description: "事件 id" }, ...EVENT_WRITE_PROPERTIES },
-      required: ["id"],
+      properties: UPDATE_PROPERTIES,
+      required: ["type", "id"],
       additionalProperties: false,
     },
-  },
-  {
-    name: "calendar_delete_event",
-    description: "【需写权限】软删除指定 id 的事件（设置 deleted_at，不物理删除）。",
-    annotations: { readOnlyHint: false, destructiveHint: true },
-    inputSchema: {
+    // event 与 deadline 的返回结构不同，这里只声明两者共有的核心字段。
+    outputSchema: {
       type: "object",
-      properties: { id: { type: "string", description: "事件 id" } },
-      required: ["id"],
-      additionalProperties: false,
+      properties: {
+        id: { type: "string" },
+        title: { type: "string" },
+        category: { type: ["string", "null"] },
+        subject_id: { type: ["string", "null"] },
+        updated_at: { type: "string" },
+      },
+      required: ["id", "title"],
+      additionalProperties: true,
     },
   },
   {
@@ -457,7 +543,7 @@ const READ_ONLY_TOOLS = TOOLS.filter((tool) => tool.annotations?.readOnlyHint);
 
 // 复用与 GET /api/events 相同的查询逻辑（直接查 D1，不经过 HTTP）。
 async function runListEvents(env, args = {}) {
-  const { from, to, category, tag_ids: tagIds } = args;
+  const { from, to, category, subject_id: subjectId, tag_ids: tagIds } = args;
   if (from !== undefined && !isValidIso(from)) throw new Error("from 必须是 ISO 8601（带时区偏移）");
   if (to !== undefined && !isValidIso(to)) throw new Error("to 必须是 ISO 8601（带时区偏移）");
   if (tagIds !== undefined) { const tagMessage = validateTagIds(tagIds); if (tagMessage) throw new Error(tagMessage); }
@@ -475,6 +561,7 @@ async function runListEvents(env, args = {}) {
   if (effectiveFrom) { sql += " AND start_time >= ?"; params.push(effectiveFrom); }
   if (effectiveTo) { sql += " AND start_time <= ?"; params.push(effectiveTo); }
   if (category) { sql += " AND category = ?"; params.push(category); }
+  if (subjectId) { sql += " AND subject_id = ?"; params.push(subjectId); }
   if (tagIds?.length) {
     const placeholders = tagIds.map(() => "?").join(", ");
     sql += ` AND ((series_id IS NULL AND id IN (SELECT event_id FROM event_tags WHERE tag_id IN (${placeholders}) GROUP BY event_id HAVING COUNT(DISTINCT tag_id) = ?)) OR (series_id IS NOT NULL AND series_id IN (SELECT series_id FROM event_series_tags WHERE tag_id IN (${placeholders}) GROUP BY series_id HAVING COUNT(DISTINCT tag_id) = ?)))`;
@@ -489,7 +576,11 @@ async function runListEvents(env, args = {}) {
 
 // 复用与 GET /api/categories 相同的查询逻辑。
 async function runListCategories(env) {
-  return queryAll(env.DB, "SELECT * FROM categories ORDER BY sort_order ASC, name ASC");
+  return queryAll(env.DB, "SELECT * FROM categories WHERE archived = 0 ORDER BY sort_order ASC, name ASC");
+}
+
+async function runListSubjects(env, args = {}) {
+  return { subjects: await listSubjects(env, { includeInactive: args.include_inactive === true }) };
 }
 
 function shanghaiDateKey(date = new Date()) {
@@ -510,6 +601,7 @@ async function runListDeadlines(env, args = {}) {
   if (to) { sql += " AND substr(due_time, 1, 10) <= ?"; params.push(to); }
   if (!includeCompleted) sql += " AND completed_at IS NULL";
   if (args.category) { sql += " AND category = ?"; params.push(args.category); }
+  if (args.subject_id) { sql += " AND subject_id = ?"; params.push(args.subject_id); }
   if (args.tag_ids?.length) { const placeholders = args.tag_ids.map(() => "?").join(", "); sql += ` AND id IN (SELECT deadline_id FROM deadline_tags WHERE tag_id IN (${placeholders}) GROUP BY deadline_id HAVING COUNT(DISTINCT tag_id) = ?)`; params.push(...args.tag_ids, args.tag_ids.length); }
   const whereSql = sql.replace(/^SELECT \* FROM deadlines WHERE /, "");
   sql += " ORDER BY substr(due_time, 1, 10) ASC, CASE WHEN all_day = 1 THEN 0 ELSE 1 END ASC, CASE WHEN all_day = 1 THEN 0 ELSE julianday(due_time) END ASC, id ASC";
@@ -519,11 +611,12 @@ async function runListDeadlines(env, args = {}) {
 async function runCreateDeadline(env, args = {}, clientName = null) {
   const message = validateDeadlineInput(args, true); if (message) throw new Error(message);
   const categoryMessage = await ensureCategoryExists(env, args.category); if (categoryMessage) throw new Error(categoryMessage);
+  const subjectMessage = await validateCategorySubject(env, args.category, args.subject_id); if (subjectMessage) throw new Error(subjectMessage);
   if (args.tag_ids !== undefined) { const tagMessage = validateTagIds(args.tag_ids); if (tagMessage) throw new Error(tagMessage); const exists = await ensureTagIdsExist(env, args.tag_ids); if (exists) throw new Error(exists); }
   const input = normalizeDeadlineInput(args); const now = nowIso();
-  const deadline = { id: crypto.randomUUID(), title: input.title.trim(), description: input.description ?? null, due_time: input.due_time, all_day: input.all_day === 1 ? 1 : 0, category: input.category ?? null, color: input.color ?? null, group_title: input.group_title ?? null, priority: input.priority || "default", source: input.source || "mcp", external_id: input.external_id ?? null, created_at: now, updated_at: now, completed_at: null, deleted_at: null };
+  const deadline = { id: crypto.randomUUID(), title: input.title.trim(), description: input.description ?? null, due_time: input.due_time, all_day: input.all_day === 1 ? 1 : 0, category: input.category ?? null, subject_id: input.subject_id ?? null, color: input.color ?? null, group_title: input.group_title ?? null, priority: input.priority || "default", source: input.source || "mcp", external_id: input.external_id ?? null, created_at: now, updated_at: now, completed_at: null, deleted_at: null };
   const statements = [
-    env.DB.prepare("INSERT INTO deadlines (id, title, description, due_time, all_day, category, color, group_title, priority, source, external_id, created_at, updated_at, completed_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    env.DB.prepare("INSERT INTO deadlines (id, title, description, due_time, all_day, category, subject_id, color, group_title, priority, source, external_id, created_at, updated_at, completed_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(...Object.values(deadline)),
     ...deadlineReminderStatements(env.DB, deadline),
     attributionStatement(env.DB, "deadlines", deadline.id, clientName),
@@ -551,7 +644,14 @@ async function runUpdateDeadline(env, args = {}, clientName = null) {
   const mergedDeadline = { ...existing, ...body };
   const message = validateDeadlineInput(mergedDeadline, true); if (message) throw new Error(message);
   const categoryMessage = await ensureCategoryExists(env, mergedDeadline.category); if (categoryMessage) throw new Error(categoryMessage);
-  const input = normalizeDeadlineInput(body); const sets = []; const values = [];
+  const input = normalizeDeadlineInput(body);
+  // 分类改成普通分类时清空 subject_id；先降级再校验。
+  if (body.category !== undefined && body.subject_id === undefined) {
+    mergedDeadline.subject_id = await subjectIdAfterCategoryChange(env, mergedDeadline.category, existing.subject_id);
+    if (mergedDeadline.subject_id !== existing.subject_id) input.subject_id = mergedDeadline.subject_id;
+  }
+  const subjectMessage = await validateCategorySubject(env, mergedDeadline.category, mergedDeadline.subject_id); if (subjectMessage) throw new Error(subjectMessage);
+  const sets = []; const values = [];
   for (const field of deadlineFields()) { if (field === "source" || field === "external_id" || input[field] === undefined) continue; sets.push(`${field} = ?`); values.push(field === "all_day" ? input[field] : field === "title" ? input[field].trim() : input[field]); }
   const now = nowIso();
   sets.push("updated_at = ?"); values.push(now, args.id);
@@ -622,16 +722,14 @@ async function getActiveEvent(env, id) {
   return queryOne(env.DB, "SELECT * FROM events WHERE id = ? AND deleted_at IS NULL", [id]);
 }
 
-// 颜色 "default" 语义：跟随所属分类的颜色。
+// 颜色 "default" 语义：跟随所属分类 / 科目的颜色，落库存 NULL。
+// 不再把写入那一刻的分类色快照进 color —— 快照会让日后改分类或科目颜色
+// 对旧数据不生效（见 migration 0012 的颜色归一化）。
 // - color 为具体值 → 原样返回
-// - color 为 "default"（忽略大小写）→ 返回该分类的颜色；无分类或查不到则 null
+// - color 为 "default"（忽略大小写）→ null
 // - color 未提供(undefined) → 原样返回 undefined（由调用方 ?? null 处理）
-async function resolveDefaultColor(env, category, color) {
+function resolveDefaultColor(color) {
   if (typeof color !== "string" || color.toLowerCase() !== "default") return color;
-  if (category) {
-    const cat = await queryOne(env.DB, "SELECT color FROM categories WHERE name = ?", [category]);
-    if (cat?.color) return cat.color;
-  }
   return null;
 }
 
@@ -643,6 +741,8 @@ async function runCreateEvent(env, args = {}, clientName = null) {
   if (temporalMsg) throw new Error(temporalMsg);
   const categoryMessage = await ensureCategoryExists(env, args.category);
   if (categoryMessage) throw new Error(categoryMessage);
+  const subjectMessage = await validateCategorySubject(env, args.category, args.subject_id);
+  if (subjectMessage) throw new Error(subjectMessage);
   const reminderRequest = requestedReminders(args, toIntBool(args.all_day) === 1);
   if (reminderRequest.error) throw new Error(reminderRequest.error);
   if (args.tag_ids !== undefined) { const tagMessage = validateTagIds(args.tag_ids); if (tagMessage) throw new Error(tagMessage); const exists = await ensureTagIdsExist(env, args.tag_ids); if (exists) throw new Error(exists); }
@@ -656,7 +756,8 @@ async function runCreateEvent(env, args = {}, clientName = null) {
     end_time: args.end_time ?? null,
     all_day: toIntBool(args.all_day),
     category: args.category ?? null,
-    color: (await resolveDefaultColor(env, args.category ?? null, args.color)) ?? null,
+    subject_id: args.subject_id || null,
+    color: resolveDefaultColor(args.color) ?? null,
     group_title: args.group_title ?? null,
     source: args.source ?? "mcp",
     external_id: args.external_id ?? null,
@@ -667,12 +768,12 @@ async function runCreateEvent(env, args = {}, clientName = null) {
 
   const reminders = reminderRequest.provided ? reminderRequest.values : [60, 10];
   const statements = [env.DB.prepare(`INSERT INTO events
-       (id, title, description, start_time, end_time, all_day, category, color,
+       (id, title, description, start_time, end_time, all_day, category, subject_id, color,
         group_title, source, external_id, created_at, updated_at, deleted_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(
       event.id, event.title, event.description, event.start_time, event.end_time,
-      event.all_day, event.category, event.color, event.group_title, event.source,
+      event.all_day, event.category, event.subject_id, event.color, event.group_title, event.source,
       event.external_id, event.created_at, event.updated_at, event.deleted_at,
     )];
   if (reminderRequest.provided) {
@@ -710,23 +811,29 @@ async function runUpdateEvent(env, args = {}, clientName = null) {
   if (temporalMsg) throw new Error(temporalMsg);
   const categoryMessage = await ensureCategoryExists(env, body.category);
   if (categoryMessage) throw new Error(categoryMessage);
+  const mergedCategory = body.category === undefined ? existing.category : body.category;
+  // 先按新分类降级 subject_id，再校验；否则「只改分类」会被旧 subject 判为非法。
+  if (body.category !== undefined && body.subject_id === undefined) {
+    body.subject_id = await subjectIdAfterCategoryChange(env, mergedCategory, existing.subject_id);
+  } else if (body.subject_id !== undefined) {
+    body.subject_id = body.subject_id || null;
+  }
+  const mergedSubjectId = body.subject_id === undefined ? existing.subject_id : body.subject_id;
+  const subjectMessage = await validateCategorySubject(env, mergedCategory, mergedSubjectId);
+  if (subjectMessage) throw new Error(subjectMessage);
   const mergedAllDay = body.all_day === undefined ? existing.all_day : toIntBool(body.all_day);
   const reminderRequest = requestedReminders(body, mergedAllDay === 1);
   if (reminderRequest.error) throw new Error(reminderRequest.error);
 
-  // 仅改 category 而未显式指定 color 时，继承该分类颜色（与 REST 一致）
+  // 改了 category 而未显式指定 color 时，清空 color 让事件跟随新分类/科目颜色（与 REST 一致）
   if (
     body.category !== undefined &&
     (body.color === undefined || String(body.color).toLowerCase() === "default") &&
     body.category !== existing.category
   ) {
-    const category = await queryOne(env.DB, "SELECT color FROM categories WHERE name = ?", [body.category]);
-    if (category?.color) body.color = category.color;
-  }
-
-  // 显式把颜色设为 "default"（未随分类变更被上面处理时）：跟随有效分类颜色
-  if (typeof body.color === "string" && body.color.toLowerCase() === "default") {
-    body.color = await resolveDefaultColor(env, body.category ?? existing.category, "default");
+    body.color = null;
+  } else if (typeof body.color === "string" && body.color.toLowerCase() === "default") {
+    body.color = resolveDefaultColor(body.color);
   }
 
   const sets = [];
@@ -763,6 +870,42 @@ async function runUpdateEvent(env, args = {}, clientName = null) {
 }
 
 // 对应 DELETE /api/events/:id （软删除）
+// 合并后的 update / delete：按 type 路由到原有实现，实现本身没动。
+function targetTypeFromArgs(args) {
+  const type = args?.type;
+  if (type !== "event" && type !== "deadline") {
+    throw new Error('type is required and must be "event" or "deadline"');
+  }
+  return type;
+}
+
+// schema 表达不了「type=event 时不许出现 priority」，而服务端本来也不校验
+// 未声明的参数，所以跨类型串味只能在这里挡。
+function rejectCrossTypeFields(type, args) {
+  const forbidden = type === "event" ? DEADLINE_ONLY_FIELDS : EVENT_ONLY_FIELDS;
+  const used = forbidden.filter((field) => args[field] !== undefined);
+  if (used.length) {
+    throw new Error(`${used.join(", ")} ${used.length > 1 ? "are" : "is"} not valid for type="${type}"`);
+  }
+}
+
+async function runUpdate(env, args = {}, clientName = null) {
+  const type = targetTypeFromArgs(args);
+  rejectCrossTypeFields(type, args);
+  const { type: _type, ...rest } = args;
+  return type === "event"
+    ? runUpdateEvent(env, rest, clientName)
+    : runUpdateDeadline(env, rest, clientName);
+}
+
+async function runDelete(env, args = {}, clientName = null) {
+  const type = targetTypeFromArgs(args);
+  const { type: _type, ...rest } = args;
+  return type === "event"
+    ? runDeleteEvent(env, rest, clientName)
+    : runDeleteDeadline(env, rest, clientName);
+}
+
 async function runDeleteEvent(env, args = {}, clientName = null) {
   const { id } = args;
   if (typeof id !== "string" || id === "") throw new Error("id is required");
@@ -805,6 +948,7 @@ function buildRecurrenceBody(args) {
     end_time: args.end_time ?? null,
     all_day: args.all_day,
     category: args.category ?? null,
+    subject_id: args.subject_id || null,
     color: args.color ?? null,
     group_title: args.group_title ?? null,
     frequency: args.frequency,
@@ -829,13 +973,15 @@ function buildRecurrenceBody(args) {
 async function runCreateEventSeries(env, args = {}, clientName = null) {
   const body = buildRecurrenceBody(args);
   if (args.tag_ids !== undefined) { const tagMessage = validateTagIds(args.tag_ids); if (tagMessage) throw new Error(tagMessage); const exists = await ensureTagIdsExist(env, args.tag_ids); if (exists) throw new Error(exists); }
-  body.color = (await resolveDefaultColor(env, body.category, body.color)) ?? null;
+  body.color = resolveDefaultColor(body.color) ?? null;
   const eventMessage = validateEventInput(body, true);
   if (eventMessage) throw new Error(eventMessage);
   const recurrenceMessage = validateRecurringRequest(body);
   if (recurrenceMessage) throw new Error(recurrenceMessage);
   const categoryMessage = await ensureCategoryExists(env, body.category);
   if (categoryMessage) throw new Error(categoryMessage);
+  const subjectMessage = await validateCategorySubject(env, body.category, body.subject_id);
+  if (subjectMessage) throw new Error(subjectMessage);
 
   let instances;
   try {
@@ -876,7 +1022,7 @@ async function runGetEventSeries(env, args = {}) {
 
 // 对应 PATCH /api/event-series/:id（MCP 版：每次调用为独立操作，不走 event_operations 幂等表）
 const SERIES_PATCH_FIELDS = [
-  "title", "description", "category", "color", "group_title", "all_day",
+  "title", "description", "category", "subject_id", "color", "group_title", "all_day",
   "start_time", "end_time", "frequency", "weekdays", "start_date",
   "end_date", "occurrence_count",
 ];
@@ -892,7 +1038,11 @@ async function runUpdateEventSeries(env, args = {}, clientName = null) {
     merged.start_date = String(merged.start_time).slice(0, 10);
   }
   if (typeof merged.color === "string" && merged.color.toLowerCase() === "default") {
-    merged.color = await resolveDefaultColor(env, merged.category, "default");
+    merged.color = resolveDefaultColor(merged.color);
+  }
+  if (args.category !== undefined && args.subject_id === undefined) {
+    // 分类改成普通分类时清空 subject_id，避免留下孤儿科目。
+    merged.subject_id = await subjectIdAfterCategoryChange(env, merged.category, merged.subject_id);
   }
   merged.interval = 1;
   if (merged.frequency === "monthly") {
@@ -1203,7 +1353,10 @@ function unauthorized(request) {
       status: 401,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
-        "WWW-Authenticate": `Bearer resource_metadata="${metadataUrl}"`,
+        // Tell MCP clients the minimum scope to request. Without this,
+        // clients may request every advertised scope as one space-delimited
+        // value (for example, "calendar calendar.read").
+        "WWW-Authenticate": `Bearer resource_metadata="${metadataUrl}", scope="calendar"`,
         ...CORS_HEADERS,
       },
     },
@@ -1228,17 +1381,16 @@ async function callTool(env, name, args, clientName) {
   switch (resolveToolName(name)) {
     case "calendar_list_events": return runListEvents(env, args);
     case "calendar_list_categories": return runListCategories(env);
+    case "calendar_list_subjects": return runListSubjects(env, args);
     case "calendar_list_tags": return runListTags(env);
     case "calendar_list_deadlines": return runListDeadlines(env, args);
     case "calendar_create_deadline": return runCreateDeadline(env, args, clientName);
     case "calendar_get_deadline": return runGetDeadline(env, args);
-    case "calendar_update_deadline": return runUpdateDeadline(env, args, clientName);
-    case "calendar_delete_deadline": return runDeleteDeadline(env, args, clientName);
+    case "calendar_update": return runUpdate(env, args, clientName);
+    case "calendar_delete": return runDelete(env, args, clientName);
     case "calendar_complete_deadline": return runSetDeadlineCompletion(env, args, true, clientName);
     case "calendar_reopen_deadline": return runSetDeadlineCompletion(env, args, false, clientName);
     case "calendar_create_event": return runCreateEvent(env, args, clientName);
-    case "calendar_update_event": return runUpdateEvent(env, args, clientName);
-    case "calendar_delete_event": return runDeleteEvent(env, args, clientName);
     case "calendar_create_event_series": return runCreateEventSeries(env, args, clientName);
     case "calendar_get_event_series": return runGetEventSeries(env, args);
     case "calendar_update_event_series": return runUpdateEventSeries(env, args, clientName);

@@ -10,6 +10,7 @@ export const EVENT_FIELDS = [
   "end_time",
   "all_day",
   "category",
+  "subject_id",
   "color",
   "group_title",
   "source",
@@ -52,6 +53,16 @@ export function validateEventTemporalOrder(input) {
 /** 服务器生成的时间戳（ISO 8601，Z 即 +00:00 偏移）。 */
 export function nowIso() {
   return new Date().toISOString();
+}
+
+/**
+ * color 的 "default" 只是「跟随分类/科目颜色」的写法，不是一个颜色值。
+ * 落库统一存 NULL，避免把当时的分类色快照进行里 —— 那会让日后改分类/科目
+ * 颜色对旧数据不生效（见 migration 0012）。
+ */
+export function normalizeEventColor(value) {
+  if (typeof value !== "string") return value;
+  return value.trim().toLowerCase() === "default" ? null : value;
 }
 
 /** 将 all_day 归一化为 0/1。 */
@@ -98,7 +109,7 @@ export function validateEventInput(input, requireCore) {
   }
 
   // 其余可选文本字段：若提供，必须是字符串或 null
-  for (const f of ["description", "category", "color", "group_title", "source", "external_id"]) {
+  for (const f of ["description", "category", "subject_id", "color", "group_title", "source", "external_id"]) {
     if (input[f] !== undefined && input[f] !== null && typeof input[f] !== "string") {
       return `${f} must be a string`;
     }

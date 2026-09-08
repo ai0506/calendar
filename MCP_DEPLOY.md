@@ -126,7 +126,8 @@ npx @modelcontextprotocol/inspector
 
 - `calendar_list_deadlines`：按 `from` / `to`（`YYYY-MM-DD`）、分类和完成状态查询；不传日期默认返回未来 30 天。
 - `calendar_create_deadline`：创建单次 DDL，必须提供 `title`、`due_time`；`priority` 为 `high`、`default` 或 `low`。
-- `calendar_get_deadline`、`calendar_update_deadline`、`calendar_delete_deadline`：读取、修改和软删除 DDL。
+- `calendar_get_deadline`：读取单个 DDL。
+- `calendar_update`、`calendar_delete`：修改 / 软删除 event 或 DDL，用 `type: "event" | "deadline"` 指定类型（create 仍分 `calendar_create_event` 与 `calendar_create_deadline`，因为两者必填的时间字段不同）。
 - `calendar_complete_deadline` / `calendar_reopen_deadline`：完成或重新打开 DDL，重复调用幂等。
 
 DDL 使用独立的 `due_time`、`priority` 和完成状态，不要当作普通 event 创建。

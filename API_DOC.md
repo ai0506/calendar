@@ -64,6 +64,7 @@ Phase 1 使用单一 `API_TOKEN`（环境变量）。
 | `from` | 起始时间（ISO 8601 带时区偏移），过滤 `start_time >= from` |
 | `to` | 结束时间（ISO 8601 带时区偏移），过滤 `start_time <= to` |
 | `category` | 按分类名过滤 |
+| `subject_id` | 按科目 id 过滤（Academics 子类，见「分类与科目」） |
 
 返回未软删除的事件数组：
 ```json
@@ -293,15 +294,19 @@ Idempotency-Key: <operation-uuid>
 ### 分类 (Categories) — ✅ 已实现 (Stage 6)
 
 #### `GET /api/categories`
-返回全部分类，按 `sort_order` 升序、再按 `name` 升序（含种子的 8 个：Math / Physics / CS / Other Subjects / Research / Projects / Leisure / Tech）：
+返回全部**未归档**分类，按 `sort_order` 升序、再按 `name` 升序（当前 5 个：Academics / Research / Projects / Leisure / Tech）：
 ```json
 {
   "ok": true,
   "data": [
-    { "id": "cat-physics", "name": "Physics", "color": "#0891b2", "sort_order": 4, "created_at": "2026-07-10T00:00:00+08:00" }
+    { "id": "cat-academics", "name": "Academics", "color": "#78716c", "sort_order": 1, "kind": "academics", "archived": 0, "created_at": "2026-09-04T00:00:00+08:00" }
   ]
 }
 ```
+
+`kind` 为 `academics` 的分类拥有 Subject 子类；其余为 `normal`。
+`archived = 1` 的分类（迁移 0012 归档的 Math / Physics / CS / Other Subjects）不在本端点返回，
+也不再接受写入，但历史数据和旧订阅 URL 仍可解析。
 
 #### `POST /api/categories`
 创建分类。`id` / `created_at` 由服务器生成；`name` / `color` 必填，`sort_order` 可选（默认 `0`）。
@@ -312,7 +317,46 @@ Idempotency-Key: <operation-uuid>
 成功：`201`，返回创建的分类对象。
 名称重复：`409`，`{ "ok": false, "error": { "code": "conflict", "message": "..." } }`。
 
-**`category` 字段的合法性校验**：Event（含批量导入）、Event Series、Deadline 的创建/修改端点（REST 与 MCP 均一致）在写入前都会检查传入的 `category` 是否已存在于本表；不存在则返回 `400 validation_error`（批量导入 `POST /api/events/import` 中单条 `category` 非法则计入 `skipped`，不影响整批）。这里没有数据库外键，是应用层强制的约束，用于防止调用方（尤其 AI Agent）凭空发明分类名。新增分类目前只能通过本端点（暂无对应 MCP 工具）；`category` 留空或为 `null` 则不做校验。
+**`category` 字段的合法性校验**：Event（含批量导入）、Event Series、Deadline 的创建/修改端点（REST 与 MCP 均一致）在写入前都会检查传入的 `category` 是否已存在于本表且未归档；不存在或已归档则返回 `400 validation_error`（批量导入 `POST /api/events/import` 中单条 `category` 非法则计入 `skipped`，不影响整批）。这里没有数据库外键，是应用层强制的约束，用于防止调用方（尤其 AI Agent）凭空发明分类名。新增分类目前只能通过本端点（暂无对应 MCP 工具）；`category` 留空或为 `null` 则不做校验。
+
+---
+
+### 科目 (Subjects) — ✅ 已实现
+
+Subject 是 `kind = "academics"` 分类专属的子类（学科）。Category 表示日程的组织范围，
+Subject 表示学业事项属于哪一门科；两者不再混用同一个字段。
+
+#### `GET /api/subjects`
+返回启用中的科目，按 `sort_order`、`name` 升序。加 `?include_inactive=1` 返回全部。
+```json
+{
+  "ok": true,
+  "data": [
+    { "id": "sub-math", "name": "Math", "category_id": "cat-academics", "color": "#ff3b30", "sort_order": 1, "active": 1 }
+  ]
+}
+```
+
+#### `POST /api/subjects`
+创建科目。`name` 与六位 hex `color` 必填；`sort_order` 可选（默认 `0`）；
+`category_id` 可选，省略时挂到当前的 academics 分类。名称重复返回 `409`。
+
+#### `subject_id` 的合法性校验
+Event（含批量导入）、Event Series、Deadline 的所有写路径（REST 与 MCP）共用同一套校验：
+
+```text
+category.kind = 'normal'                  → subject_id 必须为空，否则 400
+category.kind = 'academics' + subject_id  → subject 必须存在、属于该分类且 active = 1
+category.kind = 'academics' + 无 subject  → 合法，表示学业但未指定科目
+```
+
+把分类从 academics 改成普通分类时，若请求未显式给出 `subject_id`，服务端会自动把它清空，
+不会因为残留的旧 `subject_id` 而拒绝请求。
+
+#### 颜色解析
+优先级为 **事项显式 `color` > Subject 颜色 > Category 颜色**。
+`color` 为 `null` 或 `"default"` 都表示「跟随分类 / 科目」——写入路径不会把当时的分类色
+快照成事项的显式颜色，因此改分类或科目配色时旧数据会一起变。
 
 ---
 
@@ -340,6 +384,24 @@ Idempotency-Key: <operation-uuid>
 - 19:00 Physics revision [Physics]
 ```
 按日期分组（`## YYYY-MM-DD`），组内按时间排序；全天事件显示 `All day`；分类以 `[Category]` 附在标题后（无分类则省略）。
+
+---
+
+### Apple Calendar ICS 订阅
+
+订阅源是与 `/api` 分离的只读 HTTPS 地址，供 Apple Calendar 等不支持 Bearer Token 的客户端轮询。链接包含 `ICS_SUBSCRIPTION_TOKEN`，因此等同于只读访问密钥；不得公开、不得写入文档或日志。通过已认证网页的 **ICS** 按钮复制链接。
+
+- 全部 Event：`GET /subscribe/:token/all.ics`
+- 单个主分类：`GET /subscribe/:token/all.ics?category=:categoryId`
+- 单个科目：`GET /subscribe/:token/all.ics?subject=:subjectId`
+- 迁移 0012 归档的四个学科分类（`cat-math` / `cat-physics` / `cat-cs` / `cat-school`）
+  仍然可用：它们会被重定向到同名 Subject 的事件，避免已经在 Apple 日历里订阅的
+  分类日历在迁移后静默变空。
+- 响应为 `text/calendar; charset=utf-8`。只包含未软删除的 Event，不包含 Deadline；定时 Event 统一转换为 UTC，全天 Event 使用 RFC 5545 date-only 形式。
+- Tags 同时写入 `CATEGORIES` 与 `X-AI0506-TAGS`；Apple Calendar 订阅是只读的，tag 颜色和按 tag 筛选仍以本项目网页/Android 为准。
+- Apple Calendar 对一个订阅日历只提供单一颜色。应按分类订阅，并由用户在 Apple Calendar 中为每个分类日历设置对应颜色。
+
+订阅地址由 `GET /api/subscriptions` 在正常 Cookie/Bearer 鉴权后返回；该接口在 `ICS_SUBSCRIPTION_TOKEN` 未配置时返回 `503 not_configured`。
 
 ---
 
@@ -428,12 +490,25 @@ Remote MCP `/mcp` 提供与上述 REST API 对应的单次 DDL 工具：
 | `calendar_list_deadlines` | 按日期范围、分类和完成状态查询；不传日期时默认返回上海时间起未来 30 天 |
 | `calendar_create_deadline` | 创建单次 DDL，`priority` 支持 `high` / `default` / `low` |
 | `calendar_get_deadline` | 按 `id` 查询单个活动 DDL |
-| `calendar_update_deadline` | 修改 DDL 字段；`source` 和 `external_id` 不可修改 |
-| `calendar_delete_deadline` | 软删除 DDL |
+| `calendar_update` | 修改 event 或 DDL 字段，用 `type` 指定类型；`source` 和 `external_id` 不可修改 |
+| `calendar_delete` | 软删除 event 或 DDL，用 `type` 指定类型 |
+| `calendar_list_subjects` | 列出 Academics 的科目；写入学业事项时把返回的 `id` 放进 `subject_id`。默认只返回启用中的科目，`include_inactive` 可返回全部 |
 | `calendar_complete_deadline` | 标记完成，重复调用幂等 |
 | `calendar_reopen_deadline` | 重新打开，重复调用幂等 |
 
 MCP 工具直接访问同一 D1 数据库，并复用 REST 的字段校验、优先级枚举、截止状态和软删除规则。
+
+**Event 与 DDL 的工具划分**：`update` 与 `delete` 合并成一个工具、用 `type: "event" | "deadline"`
+区分——这两类操作在两种对象上形状相同（必填都只有 `id`），合并不丢任何 schema 信息。
+`create` **没有**合并：event 必填 `start_time`、deadline 必填 `due_time`，合并后 JSON Schema
+的 `required` 只能退化成 `["title", "type"]`，时间字段会从必填掉出去，只能靠描述文字兜底，
+代价大于收益。
+
+`calendar_update` 中带【仅 type=…】标注的字段只对该类型有效（`start_time` / `end_time` /
+`reminders` 仅 event，`due_time` / `priority` 仅 deadline），用错类型会在运行时被拒——
+JSON Schema 表达不了这种条件约束，而服务端也不校验未声明的参数，所以这层保护是显式写的。
+
+MCP 写工具**不提供 `color` 参数**：颜色由 category / subject 决定，见 §Category 与 Subject。
 
 #### 写入归因（`last_modified_by`）
 

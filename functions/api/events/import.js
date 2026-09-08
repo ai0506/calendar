@@ -15,6 +15,7 @@ import {
 } from "../../_lib/reminders.js";
 import { ensureTagIdsExist, replaceTagStatements, validateTagIds } from "../../_lib/tags.js";
 import { ensureCategoryExists } from "../../_lib/categories.js";
+import { validateCategorySubject } from "../../_lib/subjects.js";
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -50,6 +51,7 @@ export async function onRequestPost(context) {
     if (tagMessage) { skipped++; continue; }
     if (item.tag_ids !== undefined && await ensureTagIdsExist(env, item.tag_ids)) { skipped++; continue; }
     if (await ensureCategoryExists(env, item.category)) { skipped++; continue; }
+    if (await validateCategorySubject(env, item.category, item.subject_id)) { skipped++; continue; }
 
     const source = item.source ?? "web";
     const externalId = item.external_id ?? null;
@@ -57,10 +59,6 @@ export async function onRequestPost(context) {
     let eventColor = item.color ?? null;
     if (typeof eventColor === "string" && eventColor.toLowerCase() === "default") {
       eventColor = null;
-    }
-    if (item.category && item.color === undefined) {
-      const category = await queryOne(env.DB, "SELECT color FROM categories WHERE name = ?", [item.category]);
-      eventColor = category?.color ?? null;
     }
 
     // 无 external_id 时无法去重判定，直接作为新事件插入。
@@ -77,7 +75,7 @@ export async function onRequestPost(context) {
       const event = {
         ...existing, title: item.title, description: item.description ?? null,
         start_time: item.start_time, end_time: item.end_time ?? null, all_day: toIntBool(item.all_day),
-        category: item.category ?? null, color: eventColor, group_title: item.group_title ?? null, updated_at: now,
+        category: item.category ?? null, subject_id: item.subject_id || null, color: eventColor, group_title: item.group_title ?? null, updated_at: now,
       };
       const changedPlan = existing.start_time !== event.start_time || existing.all_day !== event.all_day || reminderRequest.provided;
       const reminders = reminderRequest.provided
@@ -85,9 +83,9 @@ export async function onRequestPost(context) {
         : await effectiveEventReminders(env, existing.id, existing.series_id || null);
       const statements = [env.DB.prepare(`UPDATE events SET
            title = ?, description = ?, start_time = ?, end_time = ?, all_day = ?,
-           category = ?, color = ?, group_title = ?, updated_at = ?
+           category = ?, subject_id = ?, color = ?, group_title = ?, updated_at = ?
          WHERE id = ?`).bind(event.title, event.description, event.start_time, event.end_time,
-        event.all_day, event.category, event.color, event.group_title, now, existing.id)];
+        event.all_day, event.category, event.subject_id, event.color, event.group_title, now, existing.id)];
       if (changedPlan) {
         statements.push(cancelTargetStatement(env.DB, "event", existing.id, now));
         if (reminderRequest.provided) statements.push(configStatement(env.DB, "event_reminder_configs", "event_id", existing.id, reminders, now));
@@ -105,16 +103,16 @@ export async function onRequestPost(context) {
       const event = {
         id, title: item.title, description: item.description ?? null, start_time: item.start_time,
         end_time: item.end_time ?? null, all_day: toIntBool(item.all_day), category: item.category ?? null,
-        color: eventColor, group_title: item.group_title ?? null, source, external_id: externalId,
+        subject_id: item.subject_id || null, color: eventColor, group_title: item.group_title ?? null, source, external_id: externalId,
         created_at: now, updated_at: now, deleted_at: null,
       };
       const reminders = reminderRequest.provided ? reminderRequest.values : [60, 10];
       const statements = [env.DB.prepare(`INSERT INTO events
-           (id, title, description, start_time, end_time, all_day, category, color,
+           (id, title, description, start_time, end_time, all_day, category, subject_id, color,
             group_title, source, external_id, created_at, updated_at, deleted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
         event.id, event.title, event.description, event.start_time, event.end_time, event.all_day,
-        event.category, event.color, event.group_title, event.source, event.external_id,
+        event.category, event.subject_id, event.color, event.group_title, event.source, event.external_id,
         event.created_at, event.updated_at, event.deleted_at)];
       if (reminderRequest.provided) statements.push(configStatement(env.DB, "event_reminder_configs", "event_id", id, reminders, now));
       if (item.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "event_tags", "event_id", id, item.tag_ids, now));

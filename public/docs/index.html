@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="AI0506 Calendar 技术说明：系统边界、架构、数据模型、认证、API、MCP 与部署逻辑。" />
+  <title>技术说明 · AI0506 Calendar</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="stylesheet" href="/docs/docs.css?v=20260821-2" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark"></span><span>AI0506 Calendar</span></a>
+    <div class="topbar-meta"><span>Technical overview</span><a href="/">打开应用</a></div>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-label">DOCUMENTATION</p>
+      <nav aria-label="文档目录">
+        <a href="#read-first">阅读说明</a><a href="#scope">系统边界</a><a href="#architecture">总体架构</a>
+        <a href="#request-flow">请求链路</a><a href="#security">认证与权限</a><a href="#data-model">数据模型</a>
+        <a href="#recurrence">重复事件</a><a href="#reminders">提醒通知</a><a href="#integrations">外部接入</a>
+        <a href="#operations">运行部署</a><a href="#non-goals">不做什么</a>
+      </nav>
+      <div class="sidebar-foot"><span class="status-dot"></span><span>Phase 1<br><small>核心能力已接入</small></span></div>
+    </aside>
+    <main class="content">
+      <section class="doc-intro" id="read-first">
+        <div class="kicker">AI0506 CALENDAR · TECHNICAL OVERVIEW</div>
+        <h1>这不是产品宣传页，<br>这是项目的结构说明。</h1>
+        <p class="lead">AI0506 Calendar 是一个面向个人学习、科研、考试、项目与生活安排的私人日历系统。本文解释它的边界、数据如何流动、不同客户端如何接入，以及哪些规则必须在修改代码时保持不变。</p>
+        <div class="intro-grid"><div><span>系统类型</span><strong>单用户私人系统</strong></div><div><span>部署形态</span><strong>Cloudflare Pages + D1</strong></div><div><span>数据入口</span><strong>Web · REST · MCP</strong></div><div><span>当前阶段</span><strong>Phase 1 · 可用</strong></div></div>
+      </section>
+
+      <section class="doc-section" id="scope">
+        <div class="section-title"><span>01</span><h2>系统边界</h2></div>
+        <div class="two-col"><div><h3>它解决什么问题</h3><p>用一份云端结构化数据管理事件和截止事项，并让网页、未来的 Android 客户端和 AI Agent 共享同一套 API。重点是可靠、简单、可维护，而不是构建一个面向大众的 SaaS。</p><ul class="check-list"><li>事件：创建、查询、修改、软删除</li><li>重复系列：生成实例、跳过、修改、拆分</li><li>Deadline：优先级、完成/重开、提醒</li><li>分类、标签、导入、导出、ICS 只读订阅</li></ul></div>
+          <div class="boundary-card"><div class="boundary-row"><span class="pill yes">IN</span><p>个人日程、学习/科研安排、截止日期、AI 辅助管理</p></div><div class="boundary-row"><span class="pill no">OUT</span><p>多用户、社交、公开分享、复杂权限、聊天、AI 自动规划</p></div><div class="boundary-row"><span class="pill later">LATER</span><p>Android App、课程表、Days Matter、天气卡片</p></div></div></div>
+      </section>
+
+      <section class="doc-section" id="architecture">
+        <div class="section-title"><span>02</span><h2>总体架构</h2></div>
+        <p>前端、API、MCP 和数据库位于同一个 Cloudflare Pages 项目中。客户端不直接访问 D1，所有业务写入都经过认证和领域逻辑校验。</p>
+        <div class="architecture-diagram">
+          <div class="arch-row"><div class="arch-node"><b>Web</b><small>public/index.html<br>Session Cookie</small></div><div class="arch-node"><b>Android / App</b><small>后续客户端<br>Bearer Token</small></div><div class="arch-node"><b>AI Agent</b><small>REST API<br>Remote MCP / OAuth</small></div></div>
+          <div class="arch-connector"><i></i><i></i><i></i></div>
+          <div class="arch-service"><b>Cloudflare Pages + Functions</b><small>路由 · Middleware · Auth · Domain logic · Response envelope</small></div>
+          <div class="arch-connector single"></div>
+          <div class="arch-database"><b>Cloudflare D1 · calendar-db</b><small>SQLite · events · series · deadlines · reminders · notifications · OAuth state</small></div>
+        </div>
+        <div class="note"><strong>关键原则</strong><span>客户端共享 API；API 共享数据库；REST 与 MCP 共享校验和领域逻辑；认证入口集中在 <code>functions/_middleware.js</code>。</span></div>
+      </section>
+
+      <section class="doc-section" id="request-flow">
+        <div class="section-title"><span>03</span><h2>一次请求如何流动</h2></div>
+        <div class="flow-list">
+          <div class="flow-step"><b>01</b><div><strong>客户端发起请求</strong><p>浏览器携带 session cookie；App / Agent 携带 <code>Authorization: Bearer ...</code>；MCP 客户端使用 OAuth access token。</p></div></div>
+          <div class="flow-step"><b>02</b><div><strong>Pages Function 接收</strong><p>请求进入 <code>functions/api/*</code> 或 <code>functions/mcp/index.js</code>；REST 的 <code>/api/*</code> 由全局 middleware 保护。</p></div></div>
+          <div class="flow-step"><b>03</b><div><strong>认证与输入校验</strong><p>校验凭据、JSON 字段、时间格式、分类存在性、提醒枚举和幂等键；失败返回统一错误信封。</p></div></div>
+          <div class="flow-step"><b>04</b><div><strong>领域逻辑 + D1</strong><p>事件、系列、Deadline 和提醒逻辑在 <code>functions/_lib/</code> 中复用；多步系列变更用 D1 <code>batch()</code> 保持原子性。</p></div></div>
+          <div class="flow-step"><b>05</b><div><strong>返回稳定 DTO</strong><p>成功返回 <code>{ ok: true, data }</code>；失败返回 <code>{ ok: false, error: { code, message } }</code>。</p></div></div>
+        </div>
+      </section>
+
+      <section class="doc-section" id="security">
+        <div class="section-title"><span>04</span><h2>认证与权限</h2></div>
+        <p>这是私人单用户系统，但浏览器会话和 Agent/API 访问是两条概念上分离的路径。</p>
+        <div class="security-grid"><article><span class="card-tag">BROWSER</span><h3>Session Cookie</h3><p><code>POST /api/auth/login</code> 校验私人密码，签发带 HMAC 签名的长期 Cookie。Cookie 为 <code>httpOnly</code>、<code>Secure</code>、<code>SameSite=Lax</code>；密码不会进入前端。</p></article><article><span class="card-tag">APP / AGENT</span><h3>Bearer Token</h3><p>App 和 AI Agent 使用 <code>Authorization: Bearer &lt;API_TOKEN&gt;</code>。Phase 1 只有一个 token，不做 token 管理表。</p></article><article><span class="card-tag">MCP</span><h3>OAuth 2.1 + PKCE</h3><p><code>/mcp</code> 使用 OAuth 授权；动态注册、授权码、token 和 scope 由 Pages Functions 处理。</p></article></div>
+        <div class="warning"><strong>密钥边界</strong><span><code>PASSWORD</code>、<code>API_TOKEN</code>、<code>SESSION_SECRET</code>、<code>ICS_SUBSCRIPTION_TOKEN</code> 只存在于环境变量，不写入静态页、Git 或日志。</span></div>
+      </section>
+
+      <section class="doc-section" id="data-model">
+        <div class="section-title"><span>05</span><h2>数据模型</h2></div>
+        <p>时间字段使用带时区偏移的 ISO 8601 字符串，按客户端提交的偏移原样存储，不在 API 层强制转 UTC。</p>
+        <div class="model-table"><div class="model-head"><span>实体</span><span>职责</span><span>关键关系</span></div><div><b>events</b><span>普通事件与重复事件实例</span><span><code>series_id</code> 关联系列；<code>deleted_at</code> 软删除</span></div><div><b>event_series</b><span>重复规则本身</span><span>生成实际 events；daily / weekly / monthly / yearly</span></div><div><b>deadlines</b><span>独立的单次截止事项</span><span>priority、completed_at；不属于重复 Event</span></div><div><b>categories / tags</b><span>分类颜色与辅助标签</span><span>写入前校验分类；最多 5 个 tag_ids</span></div><div><b>reminders / notifications</b><span>计划提醒与站内通知</span><span>以 reminder_id 去重；历史状态保留</span></div><div><b>exceptions / operations</b><span>系列跳过与幂等记录</span><span>支持 except、PATCH、split 重试</span></div></div>
+        <div class="code-card"><div class="code-label">IDENTITY RULES</div><pre><code>(source, external_id)  →  import idempotency
+series_id              →  recurring membership
+original_start_time    →  occurrence identity
+idempotency_key        →  safe retry for series operations</code></pre></div>
+      </section>
+
+      <section class="doc-section" id="recurrence">
+        <div class="section-title"><span>06</span><h2>重复事件逻辑</h2></div>
+        <div class="two-col"><div><h3>规则和实例分开存</h3><p><code>event_series</code> 保存规则；每一次实际发生仍是一个 <code>events</code> 行。创建系列时服务端生成最多 366 个实例，并通过 D1 batch 原子写入。</p><p>系列 PATCH 会合并已存规则、重新生成实例；首版不承诺保留此前对单个 occurrence 的直接修改。</p></div><div class="rule-stack"><div><b>except</b><span>只跳过一次，不自动创建替代事件</span></div><div><b>split</b><span>按日期拆成旧系列和新系列</span></div><div><b>delete</b><span>系列和实例均使用软删除</span></div><div><b>retry</b><span>Idempotency-Key 防止网络重试重复写入</span></div></div></div>
+        <div class="endpoint-strip"><span>POST</span><code>/api/event-series</code><span>PATCH</span><code>/api/event-series/:id</code><span>POST</span><code>/api/event-series/:id/exceptions</code><span>POST</span><code>/api/event-series/:id/split</code></div>
+      </section>
+
+      <section class="doc-section" id="reminders">
+        <div class="section-title"><span>07</span><h2>提醒与通知</h2></div>
+        <div class="reminder-timeline"><div><span class="timeline-dot"></span><b>配置</b><p>Event 默认提前 60 和 10 分钟；可自定义最多两个，或显式关闭。</p></div><div><span class="timeline-dot"></span><b>计划</b><p>服务端写入 reminders；Deadline 根据 priority 生成计划，改期/完成/删除会取消或重建 pending 行。</p></div><div><span class="timeline-dot"></span><b>派发</b><p>网页打开时轮询触发到期提醒，notifications 以 reminder_id 去重。</p></div><div><span class="timeline-dot"></span><b>展示</b><p>通知中心显示 scheduled_at；系统提示是独立的可选渠道。</p></div></div>
+        <div class="note"><strong>当前边界</strong><span>页面关闭后不承诺持续推送；历史未读在首次登录时只作为角标基线，不会集中重播。</span></div>
+      </section>
+
+      <section class="doc-section" id="integrations">
+        <div class="section-title"><span>08</span><h2>外部接入面</h2></div>
+        <div class="integration-table"><div><span class="method get">REST</span><b>Web / App / Agent</b><p><code>/api/events</code>、<code>/api/deadlines</code>、<code>/api/event-series</code>、<code>/api/export</code> 等；JSON 响应信封稳定。</p></div><div><span class="method post">MCP</span><b>AI Agent</b><p><code>/mcp</code> 暴露带 <code>calendar_</code> 前缀的工具，复用 REST 的校验、优先级、软删除和重复规则。</p></div><div><span class="method ics">ICS</span><b>Apple Calendar</b><p>只读 HTTPS 订阅不走 Cookie/Bearer，而使用高熵 URL token；只包含 Event，不包含 Deadline。</p></div><div><span class="method data">IMPORT</span><b>批量同步</b><p><code>POST /api/events/import</code> 按 <code>(source, external_id)</code> 幂等；重复提交更新而不是重复创建。</p></div></div>
+        <div class="endpoint-strip compact"><span>Base URL</span><code>https://calendar.ai0506.com/api</code><span>Local</span><code>http://localhost:8788/api</code></div>
+      </section>
+
+      <section class="doc-section" id="operations">
+        <div class="section-title"><span>09</span><h2>运行、部署与代码索引</h2></div>
+        <div class="ops-grid"><div><span class="card-tag">LOCAL</span><h3>本地开发</h3><pre><code>npm ci
+npm run db:local
+npm run dev</code></pre></div><div><span class="card-tag">CHECK</span><h3>回归验证</h3><pre><code>npm run test:deadlines
+npm run test:reminders
+npm run test:series-patch
+npm run test:ics</code></pre></div><div><span class="card-tag">DEPLOY</span><h3>生产边界</h3><p>静态资源由 Pages 提供，Functions 提供 API；D1 绑定为 <code>calendar-db</code>。本地测试不等于生产验收，部署后必须检查 live domain。</p></div></div>
+        <div class="path-list"><div><code>public/</code><span>Web shell、calendar UI、公开静态说明页</span></div><div><code>functions/api/</code><span>REST routes</span></div><div><code>functions/_lib/</code><span>auth、events、series、deadlines、reminders、ICS 等共享逻辑</span></div><div><code>functions/mcp/</code><span>Remote MCP tools 与 OAuth 接口</span></div><div><code>migrations/</code><span>D1 schema evolution；不随意改 API/数据库合同</span></div></div>
+      </section>
+
+      <section class="doc-section" id="non-goals">
+        <div class="section-title"><span>10</span><h2>明确不做与维护约束</h2></div>
+        <div class="non-goals"><div><b>不做</b><p>多用户、社交、公开分享、复杂权限、聊天、AI 自动规划、页面关闭后的可靠推送。</p></div><div><b>修改时保持</b><p>小步修改；不要硬编码密钥；不要提交 .env / .dev.vars；不要绕过 middleware；不要让 REST 与 MCP 出现两套校验规则。</p></div><div><b>判断完成</b><p>先做静态检查，再做对应回归测试；涉及部署时，分别验证本地代码、D1 状态、Cloudflare 部署和正式域名。</p></div></div>
+      </section>
+      <footer class="doc-footer"><span>AI0506 Calendar · Technical overview</span><span>Canonical docs: <code>PROJECT_SPEC.md</code> · <code>API_DOC.md</code> · <code>TEST_CHECKLIST.md</code></span></footer>
+    </main>
+  </div>
+</body>
+</html>

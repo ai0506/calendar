@@ -6,25 +6,32 @@
 ## [Unreleased]
 
 ### Added
+- 独立课程层（migration 0013）：Term / Course / CourseSlot / CourseOverride；主界面显示低优先级课程背景并提供单节/整天请假。课程沿用 Academics Subject 方案 G 配色，不进入 Event、Deadline、提醒、ICS 或导出。
+- 公开的技术说明页 `/docs`（`public/docs/`）与临时课表页 `/schedule/`（`public/schedule/`，数据源与公开订阅源 `/schedule.ics` 同一份 `course-data.js`），两者都不读 D1、不需要登录。
+- macOS 只读客户端 `mac-app/`（SwiftUI + XcodeGen）：Keychain 保存 Bearer Token，月 / 周 / 日三视图与当日详情，按 FRONTEND_SPEC 的定宽槽位与定高槽位实现，不含创建 / 编辑 / Widget。
+- 根据 G11 个人课表初始化 2026 秋季 Term、13 个 Course 和 40 个 CourseSlot（migration 0014）；具体课程名称保留在 Course，Subject 仅使用 English / Physics / Math / CS / Other。
 - Academics 特殊分类与 Subject 子类：Math / Physics / CS / Other Subjects 四个旧学科分类合并成 `Academics`，学科下沉为它专属的 Subject（Math / Physics / CS / English / Other Subjects）。Event / Deadline / Event Series 新增 `subject_id`，新增 `GET|POST /api/subjects` 与 MCP `calendar_list_subjects`，Web 端在选中 Academics 时才展开科目色块，侧栏筛选按科目细分，ICS 新增按科目订阅。见 migration `0012_academics_subjects.sql`。
 - Private Apple Calendar ICS subscriptions for all Events and each primary category, with stable recurring-occurrence UIDs, tag metadata, and an authenticated Web copy-link panel.
 - Tags for Events, Deadlines, and recurring Event Series, including category-based suggestions, Web/Android selection UI, import/export, and MCP query/write support.
 - Web notification center upgrade: historical unread items no longer replay on login, browser-alert permission is explicit, notification rows open their Event/Deadline, scheduled reminder time is shown, and stale reminder backlogs are suppressed.
 
 ### Changed
+- 课程在前端降级为低优先级图层，不再与 Event / Deadline 争版面：月视图的课程色条画在日期格顶部，不占用 chip 名额也不计入「+N more」；竖屏的课程从圆点改成圆点下方单独一排细色条；当日详情的顺序固定为 Due soon → 当天事件 → Courses → Categories → Tags，课程改成一行一节的紧凑行 + 定高滚动槽位，请假入口悬停才出现。无课的日子渲染空态而不是整块消失，保证下方控件位置不随课程数变化（FRONTEND_SPEC §2）。
+- 全站用自定义 tooltip（`[data-tip]` + 挂在 body 上的固定层）替换浏览器原生 `title`：原生要悬停约 1 秒才弹出、样式不可控，而且会被 `overflow:hidden` 的祖先（月视图格子、chip）连内容一起裁掉。新实现 80ms 出现、位置自动翻转与夹取、滚动 / 点击 / 按键即消失，输入框获得焦点时不弹，触屏设备不绑定。
 - 颜色语义改为「跟随分类 / 科目」：写入路径不再把当时的分类色快照进事项的 `color`，优先级为 事项显式颜色 > Subject 颜色 > Category 颜色。迁移 0012 会把历史数据里等于所属分类色的 `color` 归一化成 `NULL`（原值保存在 `migration_0012_backup`，回滚脚本见 `migrations/README_rollback_0012.md`）。此前 Web 与 MCP 都会把分类色写死进每一行，导致改分类配色对旧数据不生效。
 - 两级配色：普通分类（Research #7f5fb5 / Projects #c07043 / Leisure #bd5f86 / Tech #64748b）降饱和退到背景，Academics 的科目改用 Apple 系统色板（Math #ff3b30 / Physics #32ade6 / CS #30b855 / English #ff9f0a / Other Subjects #0a84ff）跳出来，与 /schedule 课表页的配色同源；Academics 自身取深中性 #655f58。「淡」实现为降饱和而非提高明度 —— 事项文字色由分类/科目色算出（74% 色 + 26% 主文字色），调浅会让浅色主题下的标签对比度不足。四个分类之间的 CIELAB 最小色差保持在 38.9，避免降饱和后彼此难以分辨。已知取舍：Apple 亮色在浅色主题下文字对比度偏低（English 3.1、CS 3.7、Physics 3.6），为配色评审时明确选定的结果。
 - 归档分类（Math / Physics / CS / Other Subjects）不再出现在 `GET /api/categories` 与 `calendar_list_categories`，也不接受新写入；已被 Apple 日历订阅的这四个分类 ICS feed 会自动重定向到同名 Subject，不会静默变空。
 - MCP 工具名统一加 `calendar_` 前缀（如 `calendar_list_events`），避免与同时挂载的其他 MCP server（Cloudflare 等）工具混淆。旧的无前缀工具名仍被服务端接受并透明映射，`tools/list` 只暴露新名。
 
 ### Fixed
+- New Event / New Deadline 里选中的分类色块，最左边一颗（Academics）的白色选中环会被弹窗左边缘裁掉半圈：`.event-form-body` 是 `overflow:auto` 的滚动容器，左右只留 3px 内边距，而选中环是 4.5px 的外投影、hover 还会放大 1.08（实际需要约 6.2px）。改为负 margin + 更大的内边距，把裁切线外移而内容左边缘保持不变。
 - `POST /api/deadlines` 引用了未定义的 `id` 变量，创建 Deadline 时必定抛 `ReferenceError`（Web 端走的是同一端点）。改为 `deadline.id`。
 - 0003 迁移把 `Personal` 改名为 `Leisure` 时只更新了 `events`，`deadlines` 里的残留分类名在 0012 中一并修正。
 - Event / Deadline / Event Series 的所有写路径（REST 与 MCP）现在会校验 `category` 是否已存在于 `categories` 表，非法分类名统一返回 `validation_error`（批量导入中计入 `skipped`）。此前 `category` 无任何约束，AI Agent 曾借此凭空写入一个未注册的分类名（`UXR课程`），导致该事件无法匹配任何 `categories` 行、拿不到分类颜色。见 `BUGS.md` BUG-0005。
 
 ### 计划中
-- Android / Flutter App
-- 完整浏览器端到端测试与生产部署验收
+- 课程层的撤销请假入口，以及放假 / 调休 / 补课 / 临时新增（暂时只走 MCP 或内部领域服务）
+- Android 真机验收、浏览器通知权限验收与完整浏览器端到端测试
 
 ### 已完成
 - Web 首版日历 UI：事件与 Deadline 的月/周/日视图、创建与详情窗口、重复事件、优先级、分类颜色、通知入口和提醒配置。

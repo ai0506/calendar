@@ -22,6 +22,9 @@ with sync_playwright() as playwright:
     page.wait_for_selector('body.is-authenticated')
     page.locator('[data-action=open-event]').click()
     page.wait_for_selector('#fTagPicker .tag-chip')
+    assert page.locator('#fStart').get_attribute('type') == 'text'
+    assert page.locator('#fEnd').get_attribute('type') == 'text'
+    assert page.locator('#fStart').get_attribute('pattern') == '(?:[01][0-9]|2[0-3]):[0-5][0-9]'
     assert page.locator('#fTagPicker .tag-chip').count() == 6
     assert page.locator('#fTagSearch').count() == 0
     widths = page.locator('#fTagPicker .tag-chip').evaluate_all('(chips) => chips.map((chip) => Math.round(chip.getBoundingClientRect().width))')

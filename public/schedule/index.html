@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<title>课表 · G11 AL 1班</title>
+<link rel="icon" type="image/png" href="/favicon.png" />
+<link rel="stylesheet" href="/styles.css?v=20260831-schedule" />
+<style>
+/* =========================================================================
+   /schedule — 临时课表页
+   视觉基准：production/ui-preview/design-a-c.html（Apple Calendar 风格）
+   复用 styles.css 的设计令牌；所有类名以 sc- 前缀，不与主日历样式冲突。
+   FRONTEND_SPEC：界面稳定不抖动、固定宽度槽位、内层滚动、
+   正在进行 = 红色语义 + prefers-reduced-motion 静态回退。
+   ========================================================================= */
+body{ -webkit-user-select:none; user-select:none; background:var(--bg-elevated); }
+
+/* ---- 顶栏：半透明浮层，内容从下方穿过（材质层级） ---- */
+.sc-bar{
+  height:calc(52px + var(--safe-t)); flex-shrink:0;
+  padding:var(--safe-t) 22px 0;
+  display:flex; align-items:center; justify-content:space-between; gap:14px;
+  background:var(--material-bar);
+  backdrop-filter:saturate(180%) blur(var(--blur));
+  -webkit-backdrop-filter:saturate(180%) blur(var(--blur));
+  border-bottom:0.5px solid var(--hairline);
+  position:relative; z-index:20;
+}
+.sc-brand{
+  display:flex; align-items:center; gap:8px;
+  font-size:14px; font-weight:600; letter-spacing:-0.015em;   /* 标题偏紧 */
+  white-space:nowrap; color:var(--ink);
+}
+.sc-brand .sc-dot{ width:7px;height:7px;border-radius:50%; background:var(--accent); }
+.sc-brand .sc-sub{ color:var(--faint); font-weight:500; letter-spacing:0; }
+
+/* 状态槽位居中且可伸缩；两侧元素不因文字长短移动 */
+.sc-status{ flex:1 1 auto; min-width:0; display:flex; justify-content:center; }
+.sc-status-pill{
+  max-width:100%; display:inline-flex; align-items:center; gap:7px;
+  height:26px; padding:0 11px; border-radius:var(--r-pill);
+  background:var(--fill); color:var(--ink-2);
+  font-size:12.5px; font-weight:500; letter-spacing:0;
+  font-variant-numeric:tabular-nums;                          /* 秒级倒计时不抖 */
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  transition:background 240ms var(--ease-out), color 240ms var(--ease-out);
+}
+.sc-status-pill.live{ background:var(--danger-wash); color:var(--danger); font-weight:600; }
+.sc-live-dot{
+  width:6px;height:6px;border-radius:50%; background:var(--danger); flex-shrink:0;
+  animation:sc-blink 1.8s var(--ease-out) infinite;
+}
+.sc-right{ display:flex; align-items:center; gap:12px; }
+.sc-subscribe{
+  display:inline-flex; align-items:center; gap:5px;
+  height:26px; padding:0 11px 0 9px; border-radius:var(--r-pill);
+  background:var(--accent-wash); color:var(--accent);
+  font-size:12px; font-weight:600; letter-spacing:0; text-decoration:none;
+  white-space:nowrap; cursor:pointer;
+  transition:background 160ms var(--ease-out);
+}
+.sc-subscribe:hover{ background:color-mix(in srgb, var(--accent) 18%, transparent); }
+.sc-subscribe:active{ transform:scale(0.96); transition:transform 90ms var(--ease-press); }
+.sc-subscribe svg{ width:13px; height:13px; }
+.sc-clock{
+  font-size:12.5px; font-weight:500; color:var(--muted);
+  font-variant-numeric:tabular-nums; white-space:nowrap;
+  min-width:124px; text-align:right;                          /* 固定槽位 */
+}
+
+@keyframes sc-blink{ 0%,100%{ opacity:1; } 50%{ opacity:.3; } }
+@keyframes sc-nowring{
+  0%  { box-shadow:inset 0 0 0 1.5px var(--danger), 0 0 0 0 var(--danger-wash); }
+  70% { box-shadow:inset 0 0 0 1.5px var(--danger), 0 0 0 6px transparent; }
+  100%{ box-shadow:inset 0 0 0 1.5px var(--danger), 0 0 0 0 transparent; }
+}
+
+/* ---- 主体 ---- */
+.sc-main{ flex:1 1 auto; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
+
+/* ---- 横屏：整周网格铺满，不滚动 ---- */
+.sc-grid{
+  flex:1 1 auto; min-height:0;
+  display:grid;
+  grid-template-columns:74px repeat(5, minmax(0,1fr));
+  grid-template-rows:26px repeat(4, minmax(0,1fr)) 18px repeat(4, minmax(0,1fr));
+  gap:4px;
+  padding:10px 20px 4px;
+  overflow:hidden;
+}
+.sc-head{
+  display:flex; align-items:center; justify-content:center;
+  font-size:11px; font-weight:600; letter-spacing:0.07em;      /* 小字放宽 */
+  color:var(--muted); border-radius:7px;
+}
+.sc-head .sc-dow{ display:inline-block; width:32px; text-align:center; }  /* 固定槽位 */
+.sc-head.today{ color:var(--accent); background:var(--sel); }
+
+.sc-time{
+  display:flex; flex-direction:column; align-items:flex-end; justify-content:center; gap:1px;
+  padding-right:12px;
+}
+.sc-time .n{ font-size:11px; font-weight:500; color:var(--muted); letter-spacing:0; }
+.sc-time .t{ font-size:10px; color:var(--faint); font-variant-numeric:tabular-nums; letter-spacing:0.01em; }
+.sc-time.now .n{ color:var(--danger); font-weight:600; }
+.sc-time.now .t{ color:var(--danger); opacity:.6; }
+
+.sc-cell{
+  position:relative; overflow:hidden;
+  border-radius:9px; padding:7px 10px;
+  display:flex; flex-direction:column; justify-content:center; gap:2px;
+  background:color-mix(in srgb, var(--c) 11%, var(--card));
+}
+.sc-cell.empty{ background:var(--fill); }
+.sc-cell .name{
+  min-height:0; font-size:12.5px; font-weight:600; line-height:1.25; letter-spacing:-0.006em;
+  color:color-mix(in srgb, var(--c) 82%, var(--chip-ink));
+  overflow:hidden; text-overflow:ellipsis;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+}
+.sc-cell .meta{
+  flex-shrink:0;
+  font-size:10.5px; letter-spacing:0.005em;
+  color:color-mix(in srgb, var(--c) 46%, var(--muted));
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.sc-cell.now{ animation:sc-nowring 2.6s var(--ease-out) infinite; }
+.sc-now-badge{
+  position:absolute; top:5px; right:7px; pointer-events:none;
+  font-size:8px; font-weight:700; letter-spacing:0.08em; color:var(--danger);
+}
+/* 当前时刻红线：与主日历的 now-line 同一套语义 */
+.sc-nowline{ position:absolute; left:0; right:0; height:1.5px; background:var(--danger); pointer-events:none; }
+.sc-nowline::before{
+  content:''; position:absolute; left:0; top:-2.25px;
+  width:6px; height:6px; border-radius:50%; background:var(--danger);
+}
+
+/* 午休：一条细线，不喧宾夺主 */
+.sc-break{
+  grid-column:1 / -1; display:flex; align-items:center; gap:10px;
+  font-size:10px; font-weight:500; letter-spacing:0.04em; color:var(--faint);
+  padding-left:calc(74px - 62px);
+}
+.sc-break span{ font-variant-numeric:tabular-nums; }
+.sc-break::after{ content:''; flex:1; height:0.5px; background:var(--hairline); }
+.sc-break.now{ color:var(--danger); }
+.sc-break.now::after{ background:color-mix(in srgb, var(--danger) 40%, transparent); }
+
+/* ---- 图例：极轻，只是识色，不是控件 ---- */
+.sc-legend{
+  flex-shrink:0; display:flex; flex-wrap:wrap; align-items:center; gap:4px 16px;
+  padding:8px 22px calc(10px + var(--safe-b));
+}
+.sc-key{
+  display:inline-flex; align-items:center; gap:6px;
+  font-size:11px; font-weight:500; letter-spacing:0.005em; color:var(--ink-2);
+}
+.sc-key .sc-swatch{ width:7px;height:7px;border-radius:50%; background:var(--c); flex-shrink:0; }
+.sc-key .sc-count{ color:var(--faint); font-variant-numeric:tabular-nums; }
+.sc-legend-note{ margin-left:auto; font-size:10.5px; color:var(--faint); white-space:nowrap; }
+
+/* ---- 竖屏 ---- */
+.sc-days{ display:none; }
+.sc-list{ display:none; }
+
+body.portrait .sc-grid{ display:none; }
+
+/* 顶栏换行：状态条独占一行，文字不被时钟挤压 */
+body.portrait .sc-bar{ height:auto; flex-wrap:wrap; row-gap:8px; padding:calc(var(--safe-t) + 10px) 16px 10px; }
+body.portrait .sc-status{ order:3; flex-basis:100%; }
+body.portrait .sc-status-pill{ width:100%; max-width:none; height:28px; justify-content:center; }
+body.portrait .sc-clock{ min-width:0; }
+body.portrait .sc-right{ gap:10px; }
+
+/* 星期切换：分段控件（house pattern，见 design-a-c .pd-tabs） */
+body.portrait .sc-days{
+  display:flex; flex-shrink:0; justify-content:center; padding:12px 14px 10px;
+}
+.sc-seg{ display:inline-flex; background:var(--fill); border-radius:11px; padding:3px; gap:2px; }
+.sc-seg button{
+  inline-size:56px; height:30px;                              /* 固定槽位 */
+  border:0; background:transparent; border-radius:8px;
+  font-size:11.5px; font-weight:600; letter-spacing:0.05em; color:var(--muted);
+  cursor:pointer; font-family:inherit;
+  transition:background 180ms var(--ease-out), color 180ms var(--ease-out);
+}
+.sc-seg button.active{ background:var(--card); color:var(--ink); box-shadow:var(--shadow-card); }
+.sc-seg button.today:not(.active){ color:var(--accent); }
+
+body.portrait .sc-list{
+  display:flex; flex-direction:column; gap:6px;
+  flex:1 1 auto; min-height:0; overflow-y:auto; scrollbar-gutter:stable;
+  padding:0 14px 18px;
+}
+.sc-row{
+  position:relative; display:flex; align-items:center; gap:11px;
+  padding:11px 13px; border-radius:12px; background:var(--fill);
+}
+.sc-row .when{
+  width:44px; flex-shrink:0; text-align:right;                /* 固定槽位 */
+  font-variant-numeric:tabular-nums;
+}
+.sc-row .when .t{ display:block; font-size:13px; font-weight:600; color:var(--ink-2); letter-spacing:-0.01em; }
+.sc-row .when .n{ display:block; font-size:10px; color:var(--faint); letter-spacing:0.02em; }
+.sc-row .bar{ width:3px; align-self:stretch; border-radius:2px; background:var(--c); flex-shrink:0; }
+.sc-row .body{ min-width:0; flex:1; }
+.sc-row .body .t{
+  font-size:14px; font-weight:600; letter-spacing:-0.012em; color:var(--ink);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.sc-row .body .s{
+  min-height:16px;                                            /* 固定行高，行不因缺信息而缩 */
+  font-size:11.5px; color:var(--muted); letter-spacing:0.004em;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.sc-row.now{ background:var(--danger-wash); }
+.sc-row.now .when .t{ color:var(--danger); }
+.sc-row .sc-now-badge{ position:static; margin-left:auto; align-self:center; }
+.sc-lunch{
+  display:flex; align-items:center; gap:10px; padding:6px 2px 6px 46px;
+  font-size:10px; font-weight:500; letter-spacing:0.04em; color:var(--faint);
+}
+.sc-lunch::after{ content:''; flex:1; height:0.5px; background:var(--hairline); }
+
+/* ---- 无障碍回退 ---- */
+@media (prefers-reduced-motion: reduce){
+  .sc-live-dot{ animation:none; }
+  .sc-cell.now{ animation:none; box-shadow:inset 0 0 0 1.5px var(--danger); }
+  .sc-status-pill{ transition:none; }
+}
+@media (prefers-contrast: more){
+  .sc-cell{ box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--c) 55%, transparent); }
+  .sc-row{ box-shadow:inset 0 0 0 1px var(--hairline-strong); }
+  .sc-cell .meta{ color:var(--ink-2); }
+}
+</style>
+</head>
+<body>
+  <header class="sc-bar">
+    <div class="sc-brand"><span class="sc-dot"></span>G11 AL 1班<span class="sc-sub">课表</span></div>
+    <div class="sc-status"><span class="sc-status-pill" id="statusPill"><i class="sc-live-dot" hidden></i><span id="statusText">载入中…</span></span></div>
+    <div class="sc-right">
+      <a class="sc-subscribe" id="subscribe" href="#" title="订阅到 Apple 日历">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/></svg>
+        订阅
+      </a>
+      <div class="sc-clock" id="clock">—</div>
+    </div>
+  </header>
+
+  <main class="sc-main">
+    <div class="sc-days"><div class="sc-seg" id="dayTabs" role="tablist" aria-label="星期"></div></div>
+    <div class="sc-grid" id="grid"></div>
+    <div class="sc-list" id="list"></div>
+    <div class="sc-legend" id="legend"></div>
+  </main>
+
+<script type="module">
+import {
+  PERIODS, LUNCH_AFTER, DAYS, LESSONS, COUNTS, COLORED,
+  MIN_LESSONS, OTHER, familyOf,
+} from "./course-data.js";
+
+(() => {
+  "use strict";
+
+  /* ---- 时间：固定按 Asia/Shanghai 计算，设备时区错了也不串 ---- */
+  const FMT = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai", hour12: false,
+    weekday: "short", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+  const WD = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+  const ZH = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+  function shanghaiNow() {
+    const p = {};
+    for (const part of FMT.formatToParts(new Date())) p[part.type] = part.value;
+    const hour = p.hour === "24" ? 0 : Number(p.hour);
+    const dow = WD[p.weekday];
+    return {
+      dow,
+      minutes: hour * 60 + Number(p.minute),
+      seconds: Number(p.second),
+      clock: `${String(hour).padStart(2, "0")}:${p.minute}`,
+      date: `${p.month}/${p.day}`,
+      weekdayZh: ZH[dow],
+    };
+  }
+  const toMin = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+  const PMIN = PERIODS.map((p) => ({ s: toMin(p.s), e: toMin(p.e) }));
+
+  /* ---- 渲染：DOM 只建一次，之后仅切 class / 改文本，杜绝抖动 ---- */
+  const grid = document.getElementById("grid");
+  const list = document.getElementById("list");
+  const dayTabs = document.getElementById("dayTabs");
+  const legend = document.getElementById("legend");
+  const statusPill = document.getElementById("statusPill");
+  const statusText = document.getElementById("statusText");
+  const statusDot = statusPill.querySelector(".sc-live-dot");
+  const clockEl = document.getElementById("clock");
+
+  const cellNodes = [];  // [period][day]
+  const headNodes = [];
+  const timeNodes = [];
+  const rowNodes = [];
+  let breakNode = null;
+  let listDay = 0;
+
+  function buildGrid() {
+    const frag = document.createDocumentFragment();
+    frag.appendChild(document.createElement("div")); // 左上角空槽
+    DAYS.forEach((ab, i) => {
+      const h = document.createElement("div");
+      h.className = "sc-head";
+      h.innerHTML = `<span class="sc-dow">${ab}</span>`;
+      headNodes[i] = h;
+      frag.appendChild(h);
+    });
+    PERIODS.forEach((p, pi) => {
+      const t = document.createElement("div");
+      t.className = "sc-time";
+      t.innerHTML = `<span class="n">${p.n}</span><span class="t">${p.s}</span>`;
+      timeNodes[pi] = t;
+      frag.appendChild(t);
+      cellNodes[pi] = [];
+      DAYS.forEach((_, di) => {
+        const cell = LESSONS[pi][di];
+        const node = document.createElement("div");
+        node.className = "sc-cell";
+        if (!cell) node.classList.add("empty");
+        else {
+          node.style.setProperty("--c", familyOf(cell).color);
+          const meta = [cell.teacher, cell.room].filter(Boolean).join(" · ");
+          node.title = cell.raw;
+          node.innerHTML = `<div class="name"></div>${meta ? '<div class="meta"></div>' : ""}<i class="sc-nowline" hidden></i>`;
+          node.querySelector(".name").textContent = cell.short;
+          if (meta) node.querySelector(".meta").textContent = meta;
+        }
+        cellNodes[pi][di] = node;
+        frag.appendChild(node);
+      });
+      if (pi === LUNCH_AFTER) {
+        breakNode = document.createElement("div");
+        breakNode.className = "sc-break";
+        breakNode.innerHTML = `午休 <span>${PERIODS[LUNCH_AFTER].e}–${PERIODS[LUNCH_AFTER + 1].s}</span>`;
+        frag.appendChild(breakNode);
+      }
+    });
+    grid.appendChild(frag);
+  }
+
+  function buildList() {
+    DAYS.forEach((ab, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("role", "tab");
+      b.textContent = ab;
+      b.addEventListener("click", () => selectDay(i));
+      dayTabs.appendChild(b);
+    });
+    PERIODS.forEach((p, pi) => {
+      const row = document.createElement("div");
+      row.className = "sc-row";
+      row.innerHTML =
+        `<div class="when"><span class="t">${p.s}</span><span class="n">${p.n}</span></div>` +
+        `<span class="bar"></span><div class="body"></div>`;
+      rowNodes[pi] = row;
+      list.appendChild(row);
+      if (pi === LUNCH_AFTER) {
+        const lunch = document.createElement("div");
+        lunch.className = "sc-lunch";
+        lunch.textContent = `午休 ${PERIODS[LUNCH_AFTER].e}–${PERIODS[LUNCH_AFTER + 1].s}`;
+        list.appendChild(lunch);
+      }
+    });
+  }
+
+  function selectDay(i) {
+    listDay = i;
+    dayTabs.querySelectorAll("button").forEach((b, bi) => {
+      b.classList.toggle("active", bi === i);
+      b.setAttribute("aria-selected", bi === i ? "true" : "false");
+    });
+    PERIODS.forEach((_, pi) => {
+      const cell = LESSONS[pi][i];
+      const row = rowNodes[pi];
+      const body = row.querySelector(".body");
+      row.classList.toggle("empty", !cell);
+      row.style.setProperty("--c", familyOf(cell).color);
+      if (cell) {
+        // 科目身份已由左侧色条表达，副行只放老师与教室，不重复标签
+        row.title = cell.raw;
+        body.innerHTML = `<div class="t"></div><div class="s"></div>`;
+        body.querySelector(".t").textContent = cell.short;
+        body.querySelector(".s").textContent =
+          [cell.teacher, cell.room].filter(Boolean).join(" · ") || "—";
+      } else {
+        row.title = "";
+        body.innerHTML = `<div class="t" style="color:var(--faint);font-weight:500">空堂</div>`;
+      }
+    });
+    tick();
+  }
+
+  function buildLegend() {
+    COLORED.concat(COUNTS.get(OTHER.id) ? [OTHER] : []).forEach((f) => {
+      const el = document.createElement("span");
+      el.className = "sc-key";
+      el.style.setProperty("--c", f.color);
+      el.innerHTML = `<span class="sc-swatch"></span>${f.label}<span class="sc-count">×${COUNTS.get(f.id) || 0}</span>`;
+      legend.appendChild(el);
+    });
+    const note = document.createElement("span");
+    note.className = "sc-legend-note";
+    note.textContent = `每周 ≥${MIN_LESSONS} 节的科目单独配色`;
+    legend.appendChild(note);
+  }
+
+  /* ---- 当前位置：before | in | gap | after | weekend ---- */
+  function locate(now) {
+    if (now.dow > 4) return { kind: "weekend", pi: -1 };
+    const m = now.minutes;
+    if (m < PMIN[0].s) return { kind: "before", pi: 0 };
+    for (let i = 0; i < PMIN.length; i++) {
+      if (m >= PMIN[i].s && m < PMIN[i].e) return { kind: "in", pi: i };
+      if (m < PMIN[i].s) return { kind: "gap", pi: i };
+    }
+    return { kind: "after", pi: -1 };
+  }
+
+  // "1 小时 23 分 05 秒" / "23 分 05 秒" / "09 秒"
+  function countdown(totalSec) {
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const sec = totalSec % 60;
+    const p = (n) => String(n).padStart(2, "0");
+    if (h > 0) return `${h} 小时 ${p(m)} 分 ${p(sec)} 秒`;
+    if (m > 0) return `${m} 分 ${p(sec)} 秒`;
+    return `${sec} 秒`;
+  }
+
+  // 今天从第 from 节起的下一节有课的节次；没有则返回 -1
+  function nextLesson(from, di) {
+    if (di < 0) return -1;
+    for (let i = from; i < PERIODS.length; i++) if (LESSONS[i][di]) return i;
+    return -1;
+  }
+
+  function nameOf(pi, di) {
+    const c = LESSONS[pi][di];
+    return c ? c.short + (c.room ? ` · ${c.room}` : "") : "空堂";
+  }
+
+  function badge(node, on) {
+    let b = node.querySelector(".sc-now-badge");
+    if (on && !b) {
+      b = document.createElement("span");
+      b.className = "sc-now-badge";
+      b.textContent = "NOW";
+      node.appendChild(b);
+    } else if (!on && b) b.remove();
+  }
+
+  function tick() {
+    const now = shanghaiNow();
+    const loc = locate(now);
+    const di = now.dow <= 4 ? now.dow : -1;
+    const live = loc.kind === "in" && di >= 0 && !!LESSONS[loc.pi][di];
+
+    clockEl.textContent = `${now.date} ${now.weekdayZh} ${now.clock}`;
+
+    headNodes.forEach((h, i) => h.classList.toggle("today", i === di));
+    dayTabs.querySelectorAll("button").forEach((b, bi) => b.classList.toggle("today", bi === di));
+
+    cellNodes.forEach((row, pi) => row.forEach((node, dd) => {
+      const on = live && pi === loc.pi && dd === di;
+      node.classList.toggle("now", on);
+      badge(node, on);
+      const line = node.querySelector(".sc-nowline");
+      if (line) {
+        line.hidden = !on;
+        if (on) {
+          const p = (now.minutes + now.seconds / 60 - PMIN[pi].s) / (PMIN[pi].e - PMIN[pi].s);
+          line.style.top = `${Math.max(0, Math.min(1, p)) * 100}%`;
+        }
+      }
+    }));
+    timeNodes.forEach((t, pi) => t.classList.toggle("now", loc.kind !== "weekend" && pi === loc.pi));
+    if (breakNode) breakNode.classList.toggle("now", loc.kind === "gap" && loc.pi === LUNCH_AFTER + 1);
+
+    rowNodes.forEach((row, pi) => {
+      const on = live && pi === loc.pi && listDay === di;
+      row.classList.toggle("now", on);
+      badge(row, on);
+    });
+
+    let text = "", isLive = false;
+    if (loc.kind === "weekend") {
+      text = "周末 · 本周课程已结束";
+    } else if (loc.kind === "in") {
+      // 上课中：还有几分钟下课
+      const left = Math.max(1, Math.ceil(PMIN[loc.pi].e - now.minutes - now.seconds / 60));
+      text = `${PERIODS[loc.pi].n} · ${nameOf(loc.pi, di)} · 还有 ${left} 分钟下课`;
+      isLive = true;
+    } else if (loc.kind === "after") {
+      text = "今日课程已结束";
+    } else {
+      // 课间 / 午休 / 上课前：倒计时到下节课 + 上什么 + 在哪
+      const np = nextLesson(loc.pi, di);
+      if (np < 0) {
+        text = "今日课程已结束";
+      } else {
+        const nowSec = now.minutes * 60 + now.seconds;
+        const left = Math.max(0, PMIN[np].s * 60 - nowSec);
+        const label = loc.kind === "before" ? "上课前" : (np === LUNCH_AFTER + 1 ? "午休" : "课间");
+        text = `${label} · 还有 ${countdown(left)} · ${PERIODS[np].n} ${nameOf(np, di)}`;
+      }
+    }
+    statusPill.classList.toggle("live", isLive);
+    statusDot.hidden = !isLive;
+    statusText.textContent = text;
+  }
+
+  /* ---- ICS 订阅：webcal:// 让 Apple 日历直接接管，而不是下载文件 ---- */
+  const feed = document.getElementById("subscribe");
+  feed.href = `webcal://${location.host}/schedule.ics`;
+  feed.title = `订阅到日历：https://${location.host}/schedule.ics`;
+
+  /* ---- 横竖屏按宽高比切换（FRONTEND_SPEC §3，阈值 1.35） ---- */
+  const applyOrientation = () =>
+    document.body.classList.toggle("portrait", window.innerWidth / window.innerHeight < 1.35);
+
+  buildGrid();
+  buildList();
+  buildLegend();
+  applyOrientation();
+  const today = shanghaiNow().dow;
+  selectDay(today <= 4 ? today : 0);
+  window.addEventListener("resize", applyOrientation);
+  setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>

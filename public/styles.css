@@ -41,6 +41,8 @@
   --material-sheet:rgba(255,255,255,0.86);
   --material-pop:  rgba(255,255,255,0.80);
   --scrim:         rgba(0,0,0,0.32);
+  --tip-bg:        rgba(28,28,30,0.92);     /* 自定义 tooltip 底色 */
+  --tip-ink:       #f5f5f7;
   --blur:          14px;
   --tl-ring:       rgba(255,255,255,0.9);   /* light catching a timeline block */
 
@@ -99,6 +101,8 @@
     --material-sheet:rgba(38,38,40,0.82);
     --material-pop:  rgba(44,44,46,0.78);
     --scrim:         rgba(0,0,0,0.52);
+    --tip-bg:        rgba(230,230,235,0.94);
+    --tip-ink:       #1c1c1e;
     --tl-ring:       rgba(0,0,0,0.5);
 
     --shadow-pop:    0 8px 30px rgba(0,0,0,0.5), 0 1px 2px rgba(0,0,0,0.4);
@@ -257,6 +261,10 @@ button:active,
   letter-spacing:-0.02em;
 }
 .cell.is-today .date-num{ background:var(--accent); color:var(--on-accent); font-weight:600; }
+/* 课程标记：细色条，明显轻于 Event chip 与 Deadline chip。 */
+.cell-courses{ display:flex; align-items:center; gap:2px; min-width:0; overflow:hidden; opacity:.5; }
+.cell-courses i{ width:3px; height:9px; border-radius:1.5px; flex:0 0 3px; }
+.cell.other-month .cell-courses{ opacity:.28; }
 .events{ margin-top:4px; display:flex; flex-direction:column; gap:3px; overflow:hidden; }
 .event-chip{
   font-size:11px; font-weight:500; padding:2.5px 7px; border-radius:6px;
@@ -341,6 +349,37 @@ button:active,
   box-shadow:inset 0 0 0 1px var(--tl-ring);
   transition:box-shadow .14s var(--ease-out), transform .14s var(--ease-out);
 }
+.course-block{
+  position:absolute; left:2px; right:2px; z-index:0; overflow:hidden; pointer-events:none;
+  padding:5px 6px; border-left:3px solid var(--course-color); border-radius:6px;
+  background:color-mix(in srgb, var(--course-color) 10%, transparent); color:var(--muted);
+  font-size:10px; line-height:1.25; opacity:.78;
+}
+.course-block span,.course-block small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.course-block small{font-size:9px;opacity:.8;margin-top:2px}
+/* 课程列表：排在 Due soon 与当天事件之后，视觉重量刻意低于两者——
+   无卡片、无色块背景，只有一条细色条 + 一行文字。 */
+.course-agenda{ margin:22px 0 4px; }
+.course-agenda-head{ display:flex; align-items:center; justify-content:space-between; gap:8px;
+  font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:8px; }
+.course-leave-all{ border:0; background:transparent; font:inherit; font-size:10.5px; font-weight:500;
+  text-transform:none; letter-spacing:0; color:var(--muted); opacity:.75; padding:0; cursor:pointer; white-space:nowrap; }
+.course-leave-all:hover{ color:var(--accent); opacity:1; }
+/* 定高槽位（FRONTEND_SPEC §2）：课程条数变化不改变下方控件位置。 */
+.course-agenda-body{ height:clamp(56px, 14vh, 140px); overflow-y:auto; scrollbar-gutter:stable;
+  display:flex; flex-direction:column; gap:1px; }
+.course-row{ display:flex; align-items:center; gap:8px; min-width:0; padding:3px 4px; border-radius:7px; }
+.course-row:hover{ background:var(--fill); }
+.course-row-bar{ width:3px; height:13px; flex:0 0 3px; border-radius:2px; background:var(--course-color); opacity:.75; }
+.course-row-time{ font-size:11.5px; color:var(--muted); font-variant-numeric:tabular-nums; flex:0 0 auto; }
+.course-row-title{ font-size:12.5px; color:var(--ink); min-width:0; flex:1;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.course-row-room{ font-size:11px; color:var(--muted); flex:0 0 auto; }
+.course-row-leave{ border:0; background:transparent; font:inherit; font-size:10.5px; color:var(--muted);
+  padding:0 2px; cursor:pointer; opacity:0; flex:0 0 auto; transition:opacity .15s var(--ease-out); }
+.course-row:hover .course-row-leave{ opacity:.8; }
+.course-row-leave:hover{ color:var(--accent); opacity:1; }
+.course-empty{ font-size:12px; color:var(--muted); padding:10px 0; }
 .tl-event:hover{ box-shadow:inset 0 0 0 1px var(--tl-ring), 0 6px 16px rgba(0,0,0,.18); z-index:2; transform:translateY(-1px); }
 .tl-event .t{ font-weight:600; display:block; letter-spacing:-0.01em; }
 .tl-event .tm{ opacity:.8; font-size:10px; }
@@ -454,6 +493,9 @@ body.is-portrait .inspector{
 .pm-dots{ display:flex; gap:3px; justify-content:center; flex-wrap:wrap; max-width:100%; min-height:5px; }
 .pm-dot{ width:5px;height:5px;border-radius:50%; }
 .pm-ddl-dot{ box-shadow:0 0 0 1px var(--hairline-strong); }
+/* 课程条：始终占位（有课才有色条），保证每格高度一致、切月份不跳动。 */
+.pm-courses{ display:flex; gap:2px; justify-content:center; align-items:center; max-width:100%; height:4px; overflow:hidden; opacity:.5; }
+.pm-courses i{ width:2.5px; height:4px; border-radius:1px; flex:0 0 2.5px; }
 
 .pd-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 18px; margin-bottom:14px; flex-shrink:0; }
 .pd-eyebrow{ font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); margin-bottom:3px; }
@@ -483,7 +525,18 @@ body.is-portrait .inspector{
   .pm-cell{ min-height:36px; }
   .pm-date{ width:22px; height:22px; font-size:12.5px; }
   .pm-dot{ width:4px; height:4px; }
+  .pm-courses{ height:3px; }
+  .pm-courses i{ height:3px; }
 }
+
+/* 自定义 tooltip（替代原生 title：原生要等 ~1s 才出现，还会被裁切）。 */
+.tip{
+  position:fixed; z-index:400; max-width:260px; pointer-events:none;
+  padding:5px 9px; border-radius:8px; font-size:12px; line-height:1.35;
+  background:var(--tip-bg); color:var(--tip-ink); box-shadow:0 4px 14px rgba(0,0,0,.18);
+  opacity:0; transform:translateY(2px); transition:opacity .12s var(--ease-out), transform .12s var(--ease-out);
+}
+.tip.show{ opacity:1; transform:translateY(0); }
 
 /* ---- 9. Scrims, modals & sheets -------------------------------------- */
 .scrim{
@@ -609,7 +662,11 @@ button.tag-chip,button.tag-filter{ cursor:pointer; }
 /* Event modal is a tall scrolling column. */
 .event-modal{ width:440px; height:min(660px, calc(100dvh - 24px)); display:flex; flex-direction:column; overflow:hidden; }
 .event-modal form{ display:flex; flex:1; min-height:0; flex-direction:column; }
-.event-form-body{ flex:1; min-height:0; overflow-y:auto; scrollbar-gutter:stable; padding:0 3px; -webkit-overflow-scrolling:touch; }
+/* 负 margin + 内边距：内容左右边缘与弹窗里的分段控件 / 按钮仍然对齐，但滚动
+   容器的裁切线往外挪 6px——选中的色块有 4.5px 的外环、hover 还会放大 1.08，
+   只留 3px 的话最左边那个（Academics）的白环会被裁掉半圈（4.5px 外环 ×1.08
+   再加上放大位移，需要约 6.2px）。 */
+.event-form-body{ flex:1; min-height:0; overflow-y:auto; scrollbar-gutter:stable; margin:0 -4px; padding:0 7px; -webkit-overflow-scrolling:touch; }
 .new-seg{ display:flex; flex-shrink:0; background:var(--fill); border-radius:11px; padding:2px; gap:2px; margin-bottom:16px; }
 .new-seg button{ flex:1; border:none; background:transparent; padding:9px 0; border-radius:9px; font-size:14px; font-weight:600; color:var(--ink); cursor:pointer; font-family:inherit; transition:color .15s var(--ease-out); }
 .new-seg button.active{ background:var(--bg-elevated); color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.12); }

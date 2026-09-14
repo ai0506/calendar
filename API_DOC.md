@@ -358,6 +358,56 @@ category.kind = 'academics' + 无 subject  → 合法，表示学业但未指定
 `color` 为 `null` 或 `"default"` 都表示「跟随分类 / 科目」——写入路径不会把当时的分类色
 快照成事项的显式颜色，因此改分类或科目配色时旧数据会一起变。
 
+### 独立课程层（migration 0013 / 0014）
+
+#### `GET /api/course-schedule`
+
+读取课程层的最终投影，不会返回 `events` 或 `deadlines`，也不会创建日历事项。
+
+```text
+GET /api/course-schedule?from=2026-09-14&to=2026-09-20
+```
+
+`from` / `to` 都是**必填**的 `YYYY-MM-DD`（含两端），`from > to`、格式不合法或缺失都返回
+`400 validation_error`。没有覆盖该区间的 Term 时返回空数组。
+
+投影行是按 Term / CourseSlot / Override 现算的，不落库：
+
+| 字段 | 说明 |
+|---|---|
+| `id` | 稳定合成值 `course:<course_slot_id>:<date>`，同一节课每次请求都相同 |
+| `date` | `YYYY-MM-DD` |
+| `term_id` / `course_id` / `course_slot_id` | 来源行 ID；`course_slot_id` 是请假时要回传的那个 |
+| `title` / `teacher` / `room` | 来自 Course / CourseSlot，`teacher`、`room` 可能为 `null` |
+| `start_time` / `end_time` | `YYYY-MM-DDTHH:mm:00+08:00`（上海时间墙钟） |
+| `subject_id` / `subject_name` / `color` | 来自 Academics Subject，`color` 即科目色 |
+| `status` | 目前恒为 `"scheduled"` |
+
+过滤规则：`weekday`（1=周一…7=周日）匹配日期；`week_pattern` 为 `odd` / `even` 时只在单
+/ 双周出现（周序从 Term 的 `start_date` 起算，第一周为第 1 周）；`first_week` / `last_week`
+限定起止周。**被请假的课程直接从结果中消失**，不会返回 `status: "cancelled"` 的行。
+非 `active` 的 Course 或 Subject 一律不投影。
+
+#### `POST /api/course-overrides`
+
+Web 目前只允许两种请假操作：
+
+```json
+{ "kind": "cancel", "effective_date": "2026-09-14", "course_slot_id": "slot-id" }
+{ "kind": "cancel_day", "effective_date": "2026-09-14" }
+```
+
+成功返回 `201`，body 是完整的 `course_overrides` 行（未使用的字段为 `null`）。
+校验失败统一返回 `400 validation_error`：`kind` 不在两者之内、`effective_date` 不是合法
+日期、该日期没有任何 Term 覆盖、`kind=cancel` 缺 `course_slot_id` 或该 slot 不存在。
+
+其他 Override 类型（`makeup`、`move`、`add`）保留在数据模型中，但暂不开放 Web API。
+**目前没有撤销请假的端点**（无 `DELETE /api/course-overrides/:id`），写错只能直接改 D1，
+见 `BUGS.md` BUG-0006。
+
+课程层完全独立：不写 `events` / `deadlines`，不产生提醒和通知，不进入 `/api/export`，
+也不进入私有 ICS 订阅源（公开的 `/schedule.ics` 是另一套静态课表数据，与本层无关）。
+
 ---
 
 ### 导出 (Export) — ✅ 已实现 (Stage 6)

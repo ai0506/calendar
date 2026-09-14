@@ -32,6 +32,7 @@ let deadlineFormPrepared = false;
 let newModalPrefillIso = null;
 let eventsByDate = new Map();
 let deadlinesByDate = new Map();
+let coursesByDate = new Map();
 let newModalTab = "event";
 let ddlSelectedCat = null;
 let ddlPriority = "default";
@@ -70,6 +71,7 @@ document.addEventListener("DOMContentLoaded", init);
 function init() {
   cacheElements();
   bindEvents();
+  bindTooltips();
   setLoading(true);
   renderEmptyShell();
   checkAuth();
@@ -703,15 +705,20 @@ async function activateNotification(item) {
   await openDetail(kind, item.target_id, { focusDate: true });
 }
 
-// Fetch a range's events + deadlines together and (optionally) cache them.
+// Fetch a range's calendar items and independent course projection together.
 async function fetchRangeData(range, { store = true } = {}) {
   const rangeKey = rangeKeyFor(range);
   const eventsUrl = `/api/events?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`;
   const deadlineFrom = addDateKey(range.from.slice(0, 10), -3);
   const deadlineTo = addDateKey(range.to.slice(0, 10), 3);
   const deadlineUrl = `/api/deadlines?from=${encodeURIComponent(deadlineFrom)}&to=${encodeURIComponent(deadlineTo)}&include_completed=true`;
-  const [json, deadlineJson] = await Promise.all([apiFetch(eventsUrl), apiFetch(deadlineUrl)]);
-  const payload = { events: json.data || [], deadlines: deadlineJson.data || [] };
+  const courseUrl = `/api/course-schedule?from=${encodeURIComponent(range.from.slice(0, 10))}&to=${encodeURIComponent(range.to.slice(0, 10))}`;
+  const [json, deadlineJson, courseJson] = await Promise.all([
+    apiFetch(eventsUrl),
+    apiFetch(deadlineUrl),
+    apiFetch(courseUrl).catch(() => ({ data: [] })),
+  ]);
+  const payload = { events: json.data || [], deadlines: deadlineJson.data || [], courses: courseJson.data || [] };
   if (store) {
     rangeCache.set(rangeKey, payload);
     trimRangeCache();
@@ -737,6 +744,7 @@ function applyCachedRange() {
   if (!cached) return false;
   applyEvents(cached.events);
   applyDeadlines(cached.deadlines);
+  applyCourses(cached.courses || []);
   lastRangeKey = rangeKey;
   lastDataSignature = dataSignature(cached);
   return true;
@@ -763,6 +771,7 @@ async function refreshVisibleData({ silent = true, force = false } = {}) {
       const changed = signature !== lastDataSignature || rangeKey !== lastRangeKey;
       applyEvents(payload.events);
       applyDeadlines(payload.deadlines);
+      applyCourses(payload.courses || []);
       lastRangeKey = rangeKey;
       lastDataSignature = signature;
       // Rebuilding the grid every 10s is what makes swipes and sheets stutter
@@ -834,6 +843,33 @@ function applyDeadlines(rows) {
   }
   for (const list of next.values()) list.sort((a, b) => Number(a.allDay) - Number(b.allDay) || a.dueMs - b.dueMs || a.title.localeCompare(b.title));
   deadlinesByDate = next;
+}
+
+function applyCourses(rows) {
+  const next = new Map();
+  for (const row of rows) {
+    if (!row?.id || !row.date || !row.start_time) continue;
+    const course = {
+      id: row.id,
+      slotId: row.course_slot_id,
+      title: row.title || "Course",
+      teacher: row.teacher || "",
+      room: row.room || "",
+      subjectName: row.subject_name || "Other",
+      color: row.color || "#655f58",
+      start: row.start_time.slice(11, 16),
+      end: row.end_time.slice(11, 16),
+      dateKey: row.date,
+    };
+    if (!next.has(course.dateKey)) next.set(course.dateKey, []);
+    next.get(course.dateKey).push(course);
+  }
+  for (const list of next.values()) list.sort((a, b) => a.start.localeCompare(b.start) || a.title.localeCompare(b.title));
+  coursesByDate = next;
+}
+
+function getCoursesFor(date) {
+  return coursesByDate.get(isoKey(date)) || [];
 }
 
 // 颜色优先级：事项显式颜色 > 科目颜色 > 分类颜色。
@@ -1030,7 +1066,11 @@ function renderPortraitMonth() {
     const iso = isoKey(date);
     const events = getEventsFor(date);
     const deadlines = getDeadlinesFor(date);
-    const marks = `<div class="pm-dots">${events.slice(0, 3).map((event) => `<div class="pm-dot" style="background:${event.color}"></div>`).join("")}${deadlines.slice(0, 2).map((deadline) => `<div class="pm-dot pm-ddl-dot" style="background:${deadlineColor(deadline)}"></div>`).join("")}</div>`;
+    // 课程属于低优先级的背景层：不占用 Event / Deadline 的圆点位，单独用一排
+    // 更细更淡的色条表示「这天有课」，避免与事项的圆点抢注意力。
+    const courseTicks = getCoursesFor(date).slice(0, 6).map((course) => `<i style="background:${course.color}"></i>`).join("");
+    const marks = `<div class="pm-dots">${events.slice(0, 3).map((event) => `<div class="pm-dot" style="background:${event.color}"></div>`).join("")}${deadlines.slice(0, 2).map((deadline) => `<div class="pm-dot pm-ddl-dot" style="background:${deadlineColor(deadline)}"></div>`).join("")}</div>
+      <div class="pm-courses">${courseTicks}</div>`;
     cells += `<button type="button" class="pm-cell ${date.getMonth() !== month ? "other" : ""} ${sameDay(date, today()) ? "today" : ""} ${sameDay(date, selectedDate) ? "sel" : ""}" data-date="${iso}">
       <span class="pm-date">${date.getDate()}</span>${marks}
     </button>`;
@@ -1064,6 +1104,7 @@ function renderPortraitDetail() {
          <div class="agenda-list">
            ${events.length ? events.map((event) => agendaItemHTML(event, date)).join("") : '<div class="inspector-empty">No events on this day.</div>'}
          </div>
+         ${courseAgendaHTML(date)}
        </div>`;
   }
   bindInspectorActions(els.inspector);
@@ -1107,13 +1148,19 @@ function renderMonth() {
     // Chips dropped here still get counted into the cell's "+N more".
     const dropped = capacity ? Math.max(0, items.length - capacity) : 0;
     const shown = dropped ? items.slice(0, capacity) : items;
+    // 课程条画在 .cell-top 里而不是 .events 里：chip 容量与 trimMonthCells 都是
+    // 按「cell 高度减去 cell-top」算的，放这里课程就自动不占 Event chip 名额。
+    const courses = getCoursesFor(date);
+    const courseTicks = courses.length
+      ? `<span class="cell-courses" data-tip="${courses.length} course${courses.length !== 1 ? "s" : ""}">${courses.slice(0, 8).map((course) => `<i style="background:${course.color}"></i>`).join("")}</span>`
+      : "";
     cells += `<div class="cell ${date.getMonth() !== month ? "other-month" : ""} ${sameDay(date, today()) ? "is-today" : ""} ${sameDay(date, selectedDate) ? "is-selected" : ""}" data-date="${iso}">
       <div class="cell-top">
-        <span class="date-num">${date.getDate()}</span>
+        <span class="date-num">${date.getDate()}</span>${courseTicks}
       </div>
       <div class="events" data-dropped="${dropped}">
         ${shown.map((item) => item.type === "deadline"
-          ? `<div class="ddl-chip ${item.value.status === "completed" ? "done" : item.value.status}" style="--ddl-color:${deadlineColor(item.value)};--ddl-bg:${item.value.bg}" data-deadline-id="${escapeAttr(item.value.id)}" title="${escapeAttr(item.value.title)}">⚑ ${escapeHtml(item.value.title)}</div>`
+          ? `<div class="ddl-chip ${item.value.status === "completed" ? "done" : item.value.status}" style="--ddl-color:${deadlineColor(item.value)};--ddl-bg:${item.value.bg}" data-deadline-id="${escapeAttr(item.value.id)}" data-tip="${escapeAttr(item.value.title)}">⚑ ${escapeHtml(item.value.title)}</div>`
           : `<div class="event-chip ${isOngoing(item.value, date) ? "ongoing" : ""}" style="background:${item.value.bg}; color:${inkColor(item.value.color)}" data-open-day="${iso}">${eventTitleHTML(item.value)}</div>`).join("")}
       </div>
     </div>`;
@@ -1239,7 +1286,7 @@ function dayPopoverHTML(iso) {
   const deadlines = getDeadlinesFor(date);
   return `<h4>${date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</h4>
     <div class="pop-sec">Deadlines · ${deadlines.length}</div>
-    ${deadlines.length ? deadlines.map((deadline) => `<div class="pop-row pop-ddl ${deadline.status === "completed" ? "done" : deadline.status}" data-deadline-id="${escapeAttr(deadline.id)}"><span class="pop-dot" style="background:${deadlineColor(deadline)}"></span><span class="pt" title="${escapeAttr(deadline.title)}">⚑ ${escapeHtml(deadline.title)}</span><span class="pm">${deadline.status === "completed" ? "Reopen" : deadline.allDay ? "All-day" : deadline.time}</span></div>`).join("") : '<div class="pop-empty">None</div>'}
+    ${deadlines.length ? deadlines.map((deadline) => `<div class="pop-row pop-ddl ${deadline.status === "completed" ? "done" : deadline.status}" data-deadline-id="${escapeAttr(deadline.id)}"><span class="pop-dot" style="background:${deadlineColor(deadline)}"></span><span class="pt" data-tip="${escapeAttr(deadline.title)}">⚑ ${escapeHtml(deadline.title)}</span><span class="pm">${deadline.status === "completed" ? "Reopen" : deadline.allDay ? "All-day" : deadline.time}</span></div>`).join("") : '<div class="pop-empty">None</div>'}
     <div class="pop-sec">Events · ${events.length}</div>
     ${events.length ? events.map((event) => `<div class="pop-row"><span class="pop-dot" style="background:${event.color}"></span><span class="pt">${eventTitleHTML(event)}</span><span class="pm">${isAllDayEvent(event) ? "All-day" : event.start}</span></div>`).join("") : '<div class="pop-empty">None</div>'}`;
 }
@@ -1250,7 +1297,7 @@ function openDayPopover(iso, anchor) {
 
 function openQuickPopover(anchor) {
   const quick = quickDeadlines();
-  const html = `<h4>Due soon · ${quick.length}</h4>${quick.length ? quick.map((deadline) => `<div class="pop-row pop-ddl ${deadline.status === "completed" ? "done" : deadline.status}" data-deadline-id="${escapeAttr(deadline.id)}"><span class="pop-dot" style="background:${deadlineColor(deadline)}"></span><span class="pt" title="${escapeAttr(deadline.title)}">⚑ ${escapeHtml(deadline.title)}</span><span class="pm">${deadlineDueText(deadline)}</span></div>`).join("") : '<div class="pop-empty">None</div>'}`;
+  const html = `<h4>Due soon · ${quick.length}</h4>${quick.length ? quick.map((deadline) => `<div class="pop-row pop-ddl ${deadline.status === "completed" ? "done" : deadline.status}" data-deadline-id="${escapeAttr(deadline.id)}"><span class="pop-dot" style="background:${deadlineColor(deadline)}"></span><span class="pt" data-tip="${escapeAttr(deadline.title)}">⚑ ${escapeHtml(deadline.title)}</span><span class="pm">${deadlineDueText(deadline)}</span></div>`).join("") : '<div class="pop-empty">None</div>'}`;
   openPopover(anchor, html);
 }
 
@@ -1266,6 +1313,7 @@ function renderInspector() {
     <div class="agenda-list">
       ${events.length ? events.map((event) => agendaItemHTML(event, date)).join("") : '<div class="inspector-empty">No events on this day.</div>'}
     </div>
+    ${courseAgendaHTML(date)}
     <div class="inspector-heading">Categories</div>
     <ul class="cat-list">
       ${filterEntries().map((entry) => `
@@ -1290,6 +1338,12 @@ function bindInspectorActions(root) {
   });
   root.querySelectorAll("[data-detail-id]").forEach((item) => {
     item.addEventListener("click", () => openDetail("event", item.dataset.detailId));
+  });
+  root.querySelectorAll("[data-course-leave]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      leaveCourse(button.dataset.courseLeave, button.dataset.courseDate, button.dataset.courseSlot || null);
+    });
   });
   root.querySelectorAll("[data-open-event]").forEach((item) => {
     item.addEventListener("click", (event) => {
@@ -1378,7 +1432,7 @@ function buildAllDayRowHTML(days) {
     const events = getEventsFor(date).filter(isAllDayEvent);
     const deadlines = getDeadlinesFor(date).filter((deadline) => deadline.allDay);
     return `<div class="allday-cell">${deadlines.map((deadline) => `
-      <div class="allday-ddl ${deadline.status === "completed" ? "done" : deadline.status}" style="--ddl-color:${deadlineColor(deadline)};--ddl-bg:${deadline.bg}" data-deadline-id="${escapeAttr(deadline.id)}" title="${escapeAttr(deadline.title)}">⚑ ${escapeHtml(deadline.title)}</div>`).join("")}${events.map((event) => `
+      <div class="allday-ddl ${deadline.status === "completed" ? "done" : deadline.status}" style="--ddl-color:${deadlineColor(deadline)};--ddl-bg:${deadline.bg}" data-deadline-id="${escapeAttr(deadline.id)}" data-tip="${escapeAttr(deadline.title)}">⚑ ${escapeHtml(deadline.title)}</div>`).join("")}${events.map((event) => `
       <div class="allday-chip" data-open-event="${escapeAttr(event.id)}" data-event-date="${isoKey(date)}" style="background:${event.bg};color:${inkColor(event.color)}">
         <span class="t">${eventTitleHTML(event)}</span>
         <button type="button" class="allday-delete" data-delete-id="${event.id}" data-delete-title="${escapeAttr(event.title)}" data-series-id="${escapeAttr(event.seriesId || "")}">x</button>
@@ -1397,6 +1451,12 @@ function buildTimeGridHTML(days) {
   }
   const now = currentMinutes();
   const dayCols = days.map((date) => {
+    const courses = getCoursesFor(date);
+    const courseBlocks = courses.map((course) => {
+      const top = timeToMin(course.start) - GRID_START_HOUR * 60;
+      const height = Math.max(timeToMin(course.end) - timeToMin(course.start), 24);
+      return `<div class="course-block" style="top:${top}px;height:${height}px;--course-color:${course.color}"><span>${escapeHtml(course.title)}</span><small>${course.start}–${course.end}</small></div>`;
+    }).join("");
     const events = layoutDayEvents(getEventsFor(date).filter((event) => !isAllDayEvent(event)));
     const blocks = events.map((event) => {
       const top = timeToMin(event.start) - GRID_START_HOUR * 60;
@@ -1419,12 +1479,12 @@ function buildTimeGridHTML(days) {
       const statusClass = deadline.status === "completed" ? "done" : "";
       const labelTop = -9 - deadlineStack * 15;
       const labelZ = 10 + deadlineStack;
-      return `<div class="tl-ddl-line ${statusClass}" style="top:${mins}px;border-top-color:${deadlineColor(deadline)}"><span class="tl-ddl-label" title="${escapeAttr(deadline.title)} · ${escapeAttr(deadline.time || "")}" style="top:${labelTop}px;z-index:${labelZ};color:${inkColor(deadlineColor(deadline))}" data-deadline-id="${escapeAttr(deadline.id)}">⚑ ${escapeHtml(deadline.title)} · ${deadline.time}${deadline.status === "overdue" ? " ⚠" : ""}</span></div>`;
+      return `<div class="tl-ddl-line ${statusClass}" style="top:${mins}px;border-top-color:${deadlineColor(deadline)}"><span class="tl-ddl-label" data-tip="${escapeAttr(deadline.title)} · ${escapeAttr(deadline.time || "")}" style="top:${labelTop}px;z-index:${labelZ};color:${inkColor(deadlineColor(deadline))}" data-deadline-id="${escapeAttr(deadline.id)}">⚑ ${escapeHtml(deadline.title)} · ${deadline.time}${deadline.status === "overdue" ? " ⚠" : ""}</span></div>`;
     }).join("");
     const nowLine = sameDay(date, today()) && now >= GRID_START_HOUR * 60 && now <= GRID_END_HOUR * 60
       ? `<div class="now-line" style="top:${now - GRID_START_HOUR * 60}px"></div>`
       : "";
-    return `<div class="day-col-body">${blocks}${deadlineLines}${nowLine}</div>`;
+    return `<div class="day-col-body">${courseBlocks}${blocks}${deadlineLines}${nowLine}</div>`;
   }).join("");
 
   const totalHeight = (GRID_END_HOUR - GRID_START_HOUR + 1) * HOUR_PX;
@@ -1458,6 +1518,38 @@ function agendaItemHTML(event, date) {
   </div>`;
 }
 
+// 课程是排在 Event / Deadline 之后的背景信息：一行一节、定高槽位内滚动，
+// 高度不跟课程条数走，免得把下面的 Categories / Tags 顶来顶去（FRONTEND_SPEC §2）。
+function courseAgendaHTML(date) {
+  const courses = getCoursesFor(date);
+  const rows = courses.length ? courses.map((course) => `<div class="course-row" style="--course-color:${course.color}" data-tip="${escapeAttr(`${course.title} · ${course.start}–${course.end}${course.room ? ` · ${course.room}` : ""}${course.teacher ? ` · ${course.teacher}` : ""}`)}">
+    <span class="course-row-bar"></span>
+    <span class="course-row-time">${escapeHtml(course.start)}</span>
+    <span class="course-row-title">${escapeHtml(course.title)}</span>
+    <span class="course-row-room">${escapeHtml(course.room || "")}</span>
+    <button type="button" class="course-row-leave" data-course-leave="cancel" data-course-slot="${escapeAttr(course.slotId)}" data-course-date="${escapeAttr(course.dateKey)}">Leave</button>
+  </div>`).join("") : '<div class="course-empty">No courses on this day.</div>';
+  return `<div class="course-agenda">
+    <div class="course-agenda-head">
+      <span>Courses · ${courses.length}</span>
+      ${courses.length ? `<button type="button" class="course-leave-all" data-course-leave="cancel_day" data-course-date="${escapeAttr(isoKey(date))}">Leave all day</button>` : ""}
+    </div>
+    <div class="course-agenda-body">${rows}</div>
+  </div>`;
+}
+
+async function leaveCourse(kind, date, slotId) {
+  const message = kind === "cancel" ? "Take leave for this class?" : "Take leave for all courses on this day?";
+  if (!window.confirm(message)) return;
+  try {
+    await apiFetch("/api/course-overrides", { method: "POST", body: JSON.stringify({ kind, effective_date: date, ...(slotId ? { course_slot_id: slotId } : {}) }) });
+    showToast("Course leave recorded");
+    await refreshVisibleData({ silent: false, force: true });
+  } catch (err) {
+    showToast(err.message || "Could not record course leave.");
+  }
+}
+
 // agenda 行空间有限：有科目时只显示科目名，没有才显示分类名。
 function agendaCategoryLabel(event) {
   const subject = event.subjectId ? getSubject(event.subjectId) : null;
@@ -1466,7 +1558,7 @@ function agendaCategoryLabel(event) {
 
 function eventTitleHTML(event) {
   const marker = event.seriesId
-    ? '<span class="repeat-mark" title="Repeating event" aria-label="Repeating event">↻</span>'
+    ? '<span class="repeat-mark" data-tip="Repeating event" aria-label="Repeating event">↻</span>'
     : "";
   return `${escapeHtml(event.title)}${marker}`;
 }
@@ -1509,14 +1601,14 @@ function layoutDayEvents(events) {
 function subjectSwatchRowHtml(categoryName, currentSubjectId, attr) {
   if (!isAcademicsCategory(categoryName)) return "";
   const academics = academicsCategory();
-  const none = `<button type="button" class="swatch swatch-none ${currentSubjectId ? "" : "selected"}" style="background:${academics.color}" ${attr}="" title="No subject" aria-label="No subject"></button>`;
-  const items = subjects.map((subject) => `<button type="button" class="swatch ${subject.id === currentSubjectId ? "selected" : ""}" style="background:${subject.color}" ${attr}="${escapeAttr(subject.id)}" title="${escapeAttr(subject.name)}" aria-label="${escapeAttr(subject.name)}"></button>`).join("");
+  const none = `<button type="button" class="swatch swatch-none ${currentSubjectId ? "" : "selected"}" style="background:${academics.color}" ${attr}="" data-tip="No subject" aria-label="No subject"></button>`;
+  const items = subjects.map((subject) => `<button type="button" class="swatch ${subject.id === currentSubjectId ? "selected" : ""}" style="background:${subject.color}" ${attr}="${escapeAttr(subject.id)}" data-tip="${escapeAttr(subject.name)}" aria-label="${escapeAttr(subject.name)}"></button>`).join("");
   return `<div class="subject-swatches">${none}${items}</div>`;
 }
 
 function renderSwatches() {
   els.catSwatches.innerHTML = categories.map((cat) => `
-    <button type="button" class="swatch ${cat.name === selectedCat ? "selected" : ""}" style="background:${cat.color}" data-cat="${escapeAttr(cat.name)}" title="${escapeAttr(cat.name)}"></button>
+    <button type="button" class="swatch ${cat.name === selectedCat ? "selected" : ""}" style="background:${cat.color}" data-cat="${escapeAttr(cat.name)}" data-tip="${escapeAttr(cat.name)}" aria-label="${escapeAttr(cat.name)}"></button>
   `).join("") + subjectSwatchRowHtml(selectedCat, selectedSubjectId, "data-subject");
   els.catSwatches.querySelectorAll("[data-cat]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1668,7 +1760,7 @@ function prepareDeadlineForm(prefillIso) {
 }
 
 function renderDdlSwatches() {
-  els.dCatSwatches.innerHTML = categories.map((category) => `<button type="button" class="swatch ${category.name === ddlSelectedCat ? "selected" : ""}" style="background:${category.color}" data-ddl-cat="${escapeAttr(category.name)}" title="${escapeAttr(category.name)}" aria-label="${escapeAttr(category.name)}"></button>`).join("")
+  els.dCatSwatches.innerHTML = categories.map((category) => `<button type="button" class="swatch ${category.name === ddlSelectedCat ? "selected" : ""}" style="background:${category.color}" data-ddl-cat="${escapeAttr(category.name)}" data-tip="${escapeAttr(category.name)}" aria-label="${escapeAttr(category.name)}"></button>`).join("")
     + subjectSwatchRowHtml(ddlSelectedCat, ddlSelectedSubjectId, "data-ddl-subject");
   els.dCatSwatches.querySelectorAll("[data-ddl-cat]").forEach((button) => button.addEventListener("click", () => {
     ddlSelectedCat = button.dataset.ddlCat;
@@ -2315,8 +2407,8 @@ function deadlineItemHTML(deadline) {
   return `<div class="ddl-item ${statusClass}" style="--ddl-color:${color};--ddl-bg:${deadline.bg}" data-deadline-id="${escapeAttr(deadline.id)}">
     <div class="ddl-item-bar"></div>
     <div class="ddl-item-main">
-      <div class="ddl-item-title" title="${escapeAttr(deadline.title)}">⚑ ${escapeHtml(deadline.title)}</div>
-      <div class="ddl-item-meta"><span class="ddl-meta-main"><span class="pri-tag pri-${deadline.priority}">${deadline.priority}</span>${deadlineDueText(deadline)}</span><span class="ddl-meta-category" title="${escapeAttr(categoryLabel(deadline))}">${escapeHtml(categoryLabel(deadline))}</span></div>
+      <div class="ddl-item-title" data-tip="${escapeAttr(deadline.title)}">⚑ ${escapeHtml(deadline.title)}</div>
+      <div class="ddl-item-meta"><span class="ddl-meta-main"><span class="pri-tag pri-${deadline.priority}">${deadline.priority}</span>${deadlineDueText(deadline)}</span><span class="ddl-meta-category" data-tip="${escapeAttr(categoryLabel(deadline))}">${escapeHtml(categoryLabel(deadline))}</span></div>
     </div>
     <span class="ddl-item-action">${statusClass === "done" ? "Reopen" : "Complete"}</span>
   </div>`;
@@ -2537,6 +2629,72 @@ function escapeHtml(value) {
 
 function escapeAttr(value) {
   return escapeHtml(value);
+}
+
+/* ---- Tooltips ---------------------------------------------------------
+   原生 title 要悬停 1 秒以上才弹出、样式不可控，而且会被 overflow:hidden 的
+   祖先（月视图格子、chip）连同内容一起裁掉。这里用 [data-tip] + 一个挂在
+   body 上的 fixed 层代替：80ms 就出现，位置自己算，永远不会被裁。 */
+let tipEl = null;
+let tipTimer = null;
+let tipTarget = null;
+
+function ensureTipEl() {
+  if (tipEl) return tipEl;
+  tipEl = document.createElement("div");
+  tipEl.className = "tip";
+  tipEl.setAttribute("role", "tooltip");
+  document.body.appendChild(tipEl);
+  return tipEl;
+}
+
+function showTip(target) {
+  const text = target.dataset.tip;
+  if (!text) return;
+  // 正在输入的字段不弹，免得挡住光标。
+  if (target === document.activeElement && target.matches("input, textarea, select")) return;
+  const tip = ensureTipEl();
+  tip.textContent = text;
+  tip.classList.add("show");
+  const rect = target.getBoundingClientRect();
+  const width = tip.offsetWidth;
+  const height = tip.offsetHeight;
+  const left = Math.min(Math.max(6, rect.left + rect.width / 2 - width / 2), window.innerWidth - width - 6);
+  // 上方放不下就翻到下方。
+  const above = rect.top - height - 7;
+  tip.style.left = `${left}px`;
+  tip.style.top = `${above >= 6 ? above : Math.min(rect.bottom + 7, window.innerHeight - height - 6)}px`;
+  tipTarget = target;
+}
+
+function hideTip() {
+  clearTimeout(tipTimer);
+  tipTarget = null;
+  tipEl?.classList.remove("show");
+}
+
+function bindTooltips() {
+  // 触屏没有 hover：在手机上 tap 会补发一次 mouseover，气泡会赖着不走，
+  // 干脆不绑（原生 title 在触屏上同样不显示）。
+  if (window.matchMedia("(hover: none)").matches) return;
+  document.addEventListener("mouseover", (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-tip]") : null;
+    if (!target || target === tipTarget) return;
+    hideTip();
+    tipTimer = setTimeout(() => showTip(target), 80);
+  });
+  document.addEventListener("mouseout", (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-tip]") : null;
+    if (!target) return;
+    // 移到自己的子节点上不算离开。
+    if (event.relatedTarget instanceof Element && target.contains(event.relatedTarget)) return;
+    hideTip();
+  });
+  // 元素一动（滚动、点击后重绘、按 Esc 关弹窗）就撤掉，避免悬空的气泡。
+  document.addEventListener("mousedown", hideTip, true);
+  document.addEventListener("scroll", hideTip, true);
+  document.addEventListener("keydown", hideTip, true);
+  window.addEventListener("blur", hideTip);
 }
 
 function showToast(message) {

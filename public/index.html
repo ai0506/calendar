@@ -10,7 +10,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>AI0506 Calendar</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
-  <link rel="stylesheet" href="/styles.css?v=20260905-filter-cascade" />
+  <link rel="stylesheet" href="/styles.css?v=20260914-tooltip-swatch-ring" />
 </head>
 <body>
   <div class="topbar" id="topbar" aria-hidden="true">
@@ -95,11 +95,11 @@
           <div class="row2" id="timeFields">
             <div class="field">
               <label for="fStart">Start (24-hour)</label>
-              <input type="text" id="fStart" value="09:00" placeholder="HH:mm" autocomplete="off" spellcheck="false" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" title="Use 24-hour time in HH:mm format (00:00–23:59)." required />
+              <input type="text" id="fStart" value="09:00" placeholder="HH:mm" autocomplete="off" spellcheck="false" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" data-tip="Use 24-hour time in HH:mm format (00:00–23:59)." required />
             </div>
             <div class="field">
               <label for="fEnd">End (24-hour)</label>
-              <input type="text" id="fEnd" value="10:00" placeholder="HH:mm" autocomplete="off" spellcheck="false" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" title="Use 24-hour time in HH:mm format (00:00–23:59)." required />
+              <input type="text" id="fEnd" value="10:00" placeholder="HH:mm" autocomplete="off" spellcheck="false" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" data-tip="Use 24-hour time in HH:mm format (00:00–23:59)." required />
             </div>
           </div>
           <div class="field-error" id="timeError">End time must be after start time.</div>
@@ -202,7 +202,7 @@
             </div>
             <div class="field" id="dTimeField">
               <label for="dTime">Due time (24-hour)</label>
-              <input type="text" id="dTime" value="18:00" placeholder="HH:mm" autocomplete="off" spellcheck="false" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" title="Use 24-hour time in HH:mm format (00:00–23:59)." required />
+              <input type="text" id="dTime" value="18:00" placeholder="HH:mm" autocomplete="off" spellcheck="false" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" data-tip="Use 24-hour time in HH:mm format (00:00–23:59)." required />
             </div>
           </div>
           <div class="field-error" id="dTimeError">Enter a valid 24-hour time (00:00–23:59).</div>
@@ -305,6 +305,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=20260905-filter-cascade" defer></script>
+  <script src="/app.js?v=20260914-tooltip-swatch-ring" defer></script>
 </body>
 </html>

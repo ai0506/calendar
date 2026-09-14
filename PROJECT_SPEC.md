@@ -5,9 +5,9 @@
 AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科研、考试、项目与生活安排。
 
 - 替代目前不符合个人需求的日历工具
-- 支持 Windows、Android 手机、Android 平板等设备
+- 支持 Windows、macOS、Android 手机、Android 平板等设备
 - 数据云端同步，多设备访问同一份数据
-- 后续可扩展为 Android App
+- 仓库内已有三个客户端：Web（`public/`，主客户端）、Android（`android/`）、macOS（`mac-app/`，只读）
 - 支持 AI agent 通过 API 管理日程
 
 这是个人工具，不是公开 SaaS，**不需要**多用户 / 社交功能。
@@ -37,8 +37,13 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
        ------------------------------
        |              |             |
    Web Website    Android App    AI Agent
+                  macOS App
 ```
 所有客户端共享同一套 API。
+
+除主日历外，站点还提供两个静态页面：`/schedule/`（临时课表页，数据源是
+`public/schedule/course-data.js`，与公开订阅源 `/schedule.ics` 同源）和 `/docs`
+（公开的技术说明页）。两者都不读 D1，也不需要登录。
 
 ## 3. 第一阶段范围 (Phase 1)
 
@@ -55,13 +60,18 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 
 优先级：**稳定 > 简洁 > 易维护 > 可扩展**。不为未来功能过度设计。
 
-### 当前完成度（2026-07-13）
+### 当前完成度（2026-09-14）
 
-- 后端核心 API：已完成（认证、事件 CRUD、重复系列、分类、导入导出、Deadline、通知）。
-- Web 前端：已完成首版可用界面，支持日历视图、Event / Deadline 创建与编辑、详情、重复事件、通知和提醒配置。
-- MCP：已提供日历、重复系列和 Deadline 操作工具。
-- 自动化验证：Deadline、Reminder、系列 PATCH 回归测试通过；完整浏览器和部署验收仍需执行。
-- 已知问题：软删除事件再次使用相同 `(source, external_id)` 导入仍待处理；本地 Wrangler compatibility date 有版本警告。
+- 后端核心 API：已完成（认证、事件 CRUD、重复系列、分类、Subject、导入导出、Deadline、通知、课程投影）。
+- Web 前端：月 / 周 / 日三视图 + 竖屏布局，Event / Deadline 创建与编辑、详情、重复事件、标签、通知与提醒配置、ICS 订阅面板、课程层显示与请假。
+- MCP：19 个工具（`calendar_` 前缀），update / delete 已按 `type` 合并；Category / Subject 只读，不开放给 AI 写。
+- ICS：按「全部事件 / 每个分类 / 每个科目」提供私有订阅源，带 RFC 7986 `COLOR` 与 Apple 的 `X-APPLE-CALENDAR-COLOR`；另有公开的 `/schedule.ics` 课表源。
+- 课程层：已建立独立的 Term / Course / CourseSlot / CourseOverride 数据层；Web 主界面读取课程投影并仅开放单节或整天请假，不写入 Event / Deadline。
+- 当前课表初始化：migration 0014 根据用户提供的 G11 个人课表写入 2026 秋季 Term（日期沿用既有 2026-08-31 至 2027-01-31 假设）；升旗、PE、语文、政治和经济归入 `Other`，英语分层课程归入 `English`。
+- 客户端：Android（Kotlin / Compose，含本地提醒与离线缓存）、macOS（`mac-app/`，SwiftUI，只读展示，无创建 / 编辑 / Widget）。
+- 生产：迁移 0001–0014 已全部应用到远程 D1；Web 与 Functions 已部署在 `calendar.ai0506.com`。
+- 自动化验证：`tests/` 下 Deadline、Reminder、系列 PATCH、Tags、ICS、OAuth scope、Subjects 七个 Node 用例通过；完整浏览器端到端与生产验收仍需人工执行。
+- 已知问题：课程请假写入后无撤销入口（见 BUGS.md BUG-0006）；Android 真机验收与浏览器通知权限验收仍未完成。
 
 ## 4. 数据模型
 
@@ -156,6 +166,24 @@ category.kind = 'academics' + 无 subject  → 合法，表示学业但未指定
 Event 支持最多两个预设提醒；全天 Event 固定在上海时间当天 09:00 提醒。Deadline 根据 priority 自动生成提醒，完成/删除/改期会取消或重建尚未派发的计划。过期 Event 与过期的 Deadline 提前提醒不会补发；最终 due 提醒只保留 24 小时宽限，避免页面重新打开时通知集中轰炸。
 
 浏览器页面打开时由前端轮询触发派发；首次轮询只把历史未读作为角标基线，不重新弹出。通知中心点击后会标记已读并打开对应 Event/Deadline。浏览器系统提示为独立、显式开启的可选渠道，仅在页面打开时工作；本阶段不承诺页面关闭后仍能推送。
+
+### 课程层（migration 0013 / 0014）
+
+课程是独立的低优先级时间背景层，不属于 Event、Deadline 或 `event_series`。
+`GET /api/course-schedule` 根据 Term、Course、CourseSlot 和 Override 计算指定日期范围的最终课表：
+按 `weekday` 匹配日期，按 `week_pattern`（`all` / `odd` / `even`）与 `first_week` / `last_week`
+过滤单双周和起止周，再扣掉当天的 `cancel_day` 与该节的 `cancel`，最后按开始时间排序。
+投影行是**计算结果、不落库**，`id` 为 `course:<course_slot_id>:<date>` 这种稳定合成值。
+
+Web 只提供 `cancel`（请假一节）和 `cancel_day`（请假当天全部课程）；放假、调休、补课、移动和临时新增保留给后续 MCP / 内部领域服务。
+课程颜色直接来自五个 Academics Subject，课程不会进入提醒、ICS、导出或 Event 重复逻辑。
+
+**显示优先级（重要）**：课程在任何视图里都排在 Event 与 Deadline 之后，不与它们争版面。
+- 月视图：课程画在日期格顶部的细色条里，**不占用 Event / Deadline 的 chip 名额**，也不计入「+N more」。
+- 竖屏月视图：Event / Deadline 用圆点，课程用圆点下方单独一排更细更淡的色条。
+- 周 / 日视图：课程是时间轴上的浅色背景块，不参与 Event 的重叠分栏，事件永远盖在课程之上。
+- 当日详情（Inspector）：顺序固定为 Due soon → 当天事件 → Courses → Categories → Tags；
+  课程列表是一行一节的紧凑行，放在定高滚动槽位里，请假入口不常驻（悬停才出现）。
 
 ### 未来表（本阶段不创建）
 - `day_marks`（Days Matter 倒计时）

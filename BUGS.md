@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-Phase 1 核心功能已完成：认证、events CRUD、categories、import、export、重复系列、Deadline、通知、Web 前端和 D1 绑定与迁移均已实现。当前仍需完成通知 API 的完整本地联调和生产部署验收。
+Phase 1 核心功能已完成：认证、events CRUD、categories、Subject、import、export、重复系列、Deadline、通知、ICS 订阅、独立课程层、Web 前端和 D1 绑定与迁移（0001–0014）均已实现并部署到生产。当前仍需完成浏览器通知权限验收、Android 真机验收和完整的浏览器端到端回归。
 
 ### [BUG-0001] localhost 开发环境 Secure Cookie 导致登录态不可用
 - 状态：Fixed
@@ -66,6 +66,20 @@ Phase 1 核心功能已完成：认证、events CRUD、categories、import、exp
 - 期望行为：`category` 应视为对 `categories.name` 的引用，非法值应在写入前被拒绝。
 - 实际行为：`category` 此前只做「是字符串」的校验，未检查是否已注册；生产库中已有一条这样的脏数据（事件 `1ebae044-663e-41bb-beea-c1320d57593d`，UXR课程加课），已手动改回 `Research`。
 - 备注 / 修复：新增 `functions/_lib/categories.js` 的 `ensureCategoryExists`，接入全部 9 个写路径（events POST/PUT、events/import、event-series POST/PATCH、deadlines POST/PUT，以及对应的 6 个 MCP 工具）；非法分类名统一返回 `validation_error`（import 中计入 `skipped`）。MCP 的 `category` 字段描述同步更新，提示需先用 `calendar_list_categories` 核对合法值。
+
+### [BUG-0006] 课程请假写入后没有撤销入口
+- 状态：Open
+- 严重程度：Medium
+- 发现日期：2026-09-14
+- 影响：课程层 / Web 前端 / API
+- 复现步骤：
+  1. 在当日详情的 Courses 列表里点 `Leave`（或标题行的 `Leave all day`）
+  2. `POST /api/course-overrides` 写入一条 `cancel` / `cancel_day` 记录，该节（或当天全部）课程从投影中消失
+  3. 想恢复时，前端没有任何入口，API 也没有 `DELETE /api/course-overrides/:id`
+- 期望行为：请假可撤销，或至少提供一个删除 Override 的端点。
+- 实际行为：只能直接改 D1 删除那一行。点击时有一次 `confirm` 二次确认，但确认后不可逆。
+- 备注 / 修复：`functions/_lib/course-schedule.js` 目前只实现了 `createCourseLeave`。
+  计划里的 `makeup` / `move` / `add` 同样未开放，一并等课程层第二阶段处理。
 
 ## 模板
 

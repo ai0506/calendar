@@ -1,0 +1,32 @@
+name: AI0506Calendar
+options:
+  bundleIdPrefix: com.ai0506.calendar
+  deploymentTarget:
+    macOS: "13.0"
+targets:
+  AI0506Calendar:
+    type: application
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - path: AI0506Calendar
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ai0506.calendar.mac
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        ENABLE_HARDENED_RUNTIME: true
+        CODE_SIGN_STYLE: Automatic
+        COMBINE_HIDPI_IMAGES: true
+    info:
+      path: AI0506Calendar/Info.plist
+      properties:
+        CFBundleDisplayName: AI0506 Calendar
+        LSMinimumSystemVersion: "13.0"
+        NSHumanReadableCopyright: ""
+    entitlements:
+      path: AI0506Calendar/AI0506Calendar.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true

@@ -151,6 +151,40 @@
 - [x] Web 浏览器回归（本地 Pages + D1）：侧栏 Academics 下缩进列出 5 个科目并可按科目单独筛选；New Event / New Deadline 只在选中 Academics 时展开科目色块，切到普通分类后科目行消失且标签建议随之切换；创建的事件用科目色渲染、数据库中 `color` 为 NULL；agenda 与详情显示科目名；无控制台报错。
 - [ ] 生产 D1 迁移与迁移后回归（未执行，待授权）。
 
+## 独立课程层（migration 0013 / 0014）
+
+- [x] 本地 D1 应用 migration 0013，创建 Term / Course / CourseSlot / CourseOverride，且不改动 Event / Deadline 表生命周期。
+- [x] `GET /api/course-schedule` 无课程或无覆盖学期时返回空数组，并拒绝非法日期范围。
+- [x] Web 课程投影接入月/周/日/竖屏数据刷新，课程颜色来自 Subject，不占用 Event/Deadline 的重叠布局。
+- [x] Web 仅显示“这一节课”和“今天所有课”两个请假入口；通用 `makeup` / `move` / `add` 不开放给 Web。
+- [x] 根据 G11 个人课表写入 1 个 Term、13 个 Course、40 个 CourseSlot，并验证课程标题、Subject 归类和教室来源。
+- [ ] 补充单双周、请假、放假、调休、补课和冲突组合测试。
+
+### 课程的显示优先级与界面稳定性（2026-09-14）
+
+- [x] 横屏月视图：课程色条画在日期格顶部，事件 / Deadline 的 chip 数量与「+N more」不因课程而减少。
+- [x] 竖屏月视图：Event / Deadline 仍是圆点，课程是圆点下方单独一排细色条；有课与无课的格子高度一致。
+- [x] 当日详情顺序为 Due soon → 当天事件 → Courses → Categories → Tags，课程不再排在最前。
+- [x] 课程列表是定高滚动槽位：选中 7 节课的工作日与 0 节课的周末，Categories 标题和 agenda 列表的位置完全不变（实测都在 846px / 420px）。
+- [x] 无课的日子显示空态而不是整块消失。
+- [x] 周 / 日视图课程是浅色背景块，事件盖在其上，不参与重叠分栏。
+- [ ] 请假后撤销（阻塞于 BUG-0006，暂无入口）。
+
+### 自定义 tooltip（替代原生 title）
+
+- [x] 全站没有残留的动态 `title=` 属性（`data-delete-title` 等数据属性除外）。
+- [x] 悬停月视图课程色条、Deadline chip、分类 / 科目色块在 80ms 内弹出气泡，内容正确。
+- [x] 气泡不被 `overflow:hidden` 的祖先（月视图格子、chip）裁掉。
+- [x] 鼠标移开、滚动、点击、按键后气泡立即消失，页面上只保留一个 `.tip` 节点。
+- [x] 时间输入框获得焦点时不弹气泡。
+- [ ] 触屏设备（`hover: none`）实机确认不绑定、tap 后无残留气泡。
+
+### 弹窗色块选中环
+
+- [x] New Event / New Deadline 选中最左边的 Academics 分类，白色选中环是完整圆环，没有被弹窗左边缘裁切。
+- [x] 表单内容左边缘与改动前一致（色块与 Title 输入框同为 447.5px @1280×800），未因修复而整体位移。
+- [x] 窄宽度（780×620，弹窗为 sheet 模式）下同样不裁切。
+
 ## MCP 工具合并（update / delete）
 
 - [x] `calendar_update` `type=event` 只改标题，`start_time` 保持不变

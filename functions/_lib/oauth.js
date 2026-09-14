@@ -24,7 +24,14 @@ export const READ_SCOPE = "calendar.read";
 export const USER_SUB = "owner";
 
 export function normalizeScope(value) {
-  if (value === DEFAULT_SCOPE || value === READ_SCOPE) return value;
+  if (typeof value !== "string") return null;
+  const scopes = value.trim().split(/\s+/).filter(Boolean);
+  if (scopes.length === 0) return null;
+  // OAuth scope is a space-delimited list. `calendar` is the full-access
+  // scope, so it subsumes the read-only scope when a client requests both.
+  if (scopes.some((scope) => scope !== DEFAULT_SCOPE && scope !== READ_SCOPE)) return null;
+  if (scopes.includes(DEFAULT_SCOPE)) return DEFAULT_SCOPE;
+  if (scopes.every((scope) => scope === READ_SCOPE)) return READ_SCOPE;
   return null;
 }
 

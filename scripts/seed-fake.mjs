@@ -41,6 +41,19 @@ for (const d of fixture.deadlines) {
   if (d.all_day && d.due_time !== null) problems.push(`${d.id}: 全天项的 due_time 必须是 null`);
   if (!d.all_day && !d.due_time) problems.push(`${d.id}: 定时项缺 due_time`);
 }
+// 标签建议的键是分类 id 或科目 id（GET /api/category-tag-suggestions 就是这么返回的），
+// 两套 id 混在同一个对象里，所以两边都要认。
+const categoryIDs = new Set(fixture.categories.map((c) => c.id));
+for (const [ownerID, tagList] of Object.entries(fixture.tag_suggestions ?? {})) {
+  if (!categoryIDs.has(ownerID) && !subjectIDs.has(ownerID)) {
+    problems.push(`tag_suggestions: "${ownerID}" 既不是分类 id 也不是科目 id`);
+  }
+  for (const tag of tagList) {
+    if (!tagIDs.has(tag)) problems.push(`tag_suggestions["${ownerID}"]: 标签 "${tag}" 不在 tags 里`);
+  }
+  if (new Set(tagList).size !== tagList.length) problems.push(`tag_suggestions["${ownerID}"]: 有重复标签`);
+}
+
 if (problems.length) {
   console.error("fixture 有问题：\n  " + problems.join("\n  "));
   process.exit(1);
@@ -91,6 +104,20 @@ lines.push("");
 
 for (const t of fixture.tags) {
   lines.push(`INSERT OR REPLACE INTO tags (id, name, color, created_at) VALUES (${q(t.id)}, ${q(t.name)}, ${q(t.color)}, ${q(nowISO)});`);
+}
+lines.push("");
+
+for (const [ownerID, tagList] of Object.entries(fixture.tag_suggestions ?? {})) {
+  const isSubject = subjectIDs.has(ownerID);
+  const table = isSubject ? "subject_tag_suggestions" : "category_tag_suggestions";
+  const ownerColumn = isSubject ? "subject_id" : "category_id";
+  lines.push(`DELETE FROM ${table} WHERE ${ownerColumn} = ${q(ownerID)};`);
+  tagList.forEach((tag, index) => {
+    lines.push(
+      `INSERT OR REPLACE INTO ${table} (${ownerColumn}, tag_id, sort_order) VALUES ` +
+      `(${q(ownerID)}, ${q(tag)}, ${index + 1});`
+    );
+  });
 }
 lines.push("");
 

@@ -16,7 +16,9 @@
     "db:remote": "wrangler d1 migrations apply calendar-db --remote",
     "db:create": "wrangler d1 create calendar-db",
     "deploy": "wrangler pages deploy",
-    "test:subjects": "node tests/subjects.test.mjs"
+    "test:subjects": "node tests/subjects.test.mjs",
+    "db:seed-fake": "node scripts/seed-fake.mjs > .seed-fake.generated.sql && wrangler d1 execute calendar-db --local --file=.seed-fake.generated.sql",
+    "fixtures:check": "node scripts/seed-fake.mjs > /dev/null && echo 'fixtures/sample-workspace.json 一致性检查通过'"
   },
   "devDependencies": {
     "wrangler": "^4.110.0"

@@ -23,3 +23,6 @@ Thumbs.db
 
 # Codex / production process files
 production/
+
+# 由 scripts/seed-fake.mjs 生成的本地种子 SQL
+.seed-fake.generated.sql

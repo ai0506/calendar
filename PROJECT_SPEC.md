@@ -70,7 +70,7 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 - 当前课表初始化：migration 0014 根据用户提供的 G11 个人课表写入 2026 秋季 Term（日期沿用既有 2026-08-31 至 2027-01-31 假设）；升旗、PE、语文、政治和经济归入 `Other`，英语分层课程归入 `English`。
 - 客户端：Android（Kotlin / Compose，含本地提醒与离线缓存）、macOS（`mac-app/`，SwiftUI，只读展示，无创建 / 编辑 / Widget）。
 - Deadline × Course 关联：`deadlines.course_id`（migration 0015）+ `GET /api/course-catalog`，只通过认证后的 REST 与 MCP 暴露给 Reminders / AI 客户端，Calendar 自家前端本期不展示。
-- 生产：迁移 0001–0014 已全部应用到远程 D1；**迁移 0015 目前只应用在本地 D1，尚未上生产、未部署**；Web 与 Functions 已部署在 `calendar.ai0506.com`。
+- 生产：迁移 0001–0015 已全部应用到远程 D1；Web 与 Functions 已部署在 `calendar.ai0506.com`。
 - 自动化验证：`tests/` 下 Deadline、Reminder、系列 PATCH、Tags、ICS、OAuth scope、Subjects、Deadline×Course（库级 + 路由级）九个 Node 用例通过；完整浏览器端到端与生产验收仍需人工执行。
 - 已知问题：课程请假写入后无撤销入口（见 BUGS.md BUG-0006）；Android 真机验收与浏览器通知权限验收仍未完成。
 

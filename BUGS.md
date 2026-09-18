@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-Phase 1 核心功能已完成：认证、events CRUD、categories、Subject、import、export、重复系列、Deadline、通知、ICS 订阅、独立课程层、Web 前端和 D1 绑定与迁移（0001–0014）均已实现并部署到生产。迁移 0015（`deadlines.course_id`）与 `GET /api/course-catalog` 已在本地完成并通过测试，**尚未上生产**。当前仍需完成浏览器通知权限验收、Android 真机验收和完整的浏览器端到端回归。
+Phase 1 核心功能已完成：认证、events CRUD、categories、Subject、import、export、重复系列、Deadline、通知、ICS 订阅、独立课程层、Web 前端和 D1 绑定与迁移（0001–0015，含 `deadlines.course_id` 与 `GET /api/course-catalog`）均已实现并部署到生产。当前仍需完成浏览器通知权限验收、Android 真机验收和完整的浏览器端到端回归。
 
 ### [BUG-0001] localhost 开发环境 Secure Cookie 导致登录态不可用
 - 状态：Fixed

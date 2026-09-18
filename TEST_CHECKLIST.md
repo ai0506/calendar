@@ -200,8 +200,10 @@
   - [x] MCP：`calendar_create_deadline` 带 `course_id` 成功并落库；`calendar_get_deadline` / `calendar_list_deadlines` / `calendar_complete_deadline` 回传 `course_id`；`calendar_update` 改 / 清 `course_id` 生效，Subject 不匹配被拒且不改库。
   - [x] MCP 跨类型串味：`calendar_update` `type=event` 传 `course_id` → `course_id is not valid for type="event"`。
 - [x] 本地 D1 应用 migration 0015，`PRAGMA table_info(deadlines)` 中存在 `course_id`。
-- [ ] 生产 D1 迁移 0015 与部署后回归（未执行，待授权）。
-- [ ] 真实请求验收：带 Bearer Token 调 `GET /api/course-catalog` 与带 `course_id` 的 Deadline 写入（未执行，待授权）。
+- [x] 生产 D1 应用迁移 0015（2026-09-18）：远端 `PRAGMA table_info(deadlines)` 中 `course_id` 为 cid 17，22 条既有 Deadline 的 `course_id` 全为 `NULL`。
+- [x] Pages 部署（deployment `bffd0179`）：生产与预览域名的 `GET /api/course-catalog` 均返回 `401 unauthorized`（路由存在且认证生效，不是 404）。
+- [x] 生产 MCP 读验收：`calendar_list_deadlines` 返回的 Deadline 对象已带 `course_id` 字段。
+- [ ] 生产写验收：带 `course_id` 的真实 Deadline 写入与 `GET /api/course-catalog` 的带票读取（留给 Reminders 接入时一并验证，避免往真实日历塞测试数据）。
 - [x] Course 被物理删除时的行为：本地 D1 实测，删除仍被 Deadline 引用的 Course 返回 `FOREIGN KEY constraint failed`（等效 RESTRICT，不会留下悬空引用）；写入不存在的 `course_id` 也在 DB 层被同一约束挡下。没有任何 API 能删除 Course。
 
 ## MCP 工具合并（update / delete）

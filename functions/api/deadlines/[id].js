@@ -10,6 +10,7 @@ import {
   deadlineFields,
   normalizeDeadlineInput,
   rowToDeadline,
+  validateDeadlineCourse,
   validateDeadlineInput,
 } from "../../_lib/deadlines.js";
 import { nowIso } from "../../_lib/events.js";
@@ -56,6 +57,8 @@ export async function onRequestPut(context) {
   }
   const subjectMessage = await validateCategorySubject(env, merged.category, merged.subject_id);
   if (subjectMessage) return error("validation_error", subjectMessage, 400);
+  const courseMessage = await validateDeadlineCourse(env, merged);
+  if (courseMessage) return error("validation_error", courseMessage, 400);
   const sets = [];
   const values = [];
   for (const field of deadlineFields()) {

@@ -75,6 +75,16 @@ export async function listCourseSchedule(env, from, to) {
   return rows.sort((a, b) => a.start_time.localeCompare(b.start_time) || a.title.localeCompare(b.title));
 }
 
+// Small, privacy-minimized directory for authenticated clients that need to
+// resolve an explicitly named Course without depending on today's timetable.
+// Inactive rows remain visible because Calendar permits a new Deadline to keep
+// context with a retired Course.
+export async function listCourseCatalog(env) {
+  return queryAll(env.DB, `SELECT id, name, subject_id, active
+    FROM courses
+    ORDER BY active DESC, name COLLATE NOCASE ASC, id ASC`);
+}
+
 export async function createCourseLeave(env, body) {
   const kind = body.kind;
   if (!KINDS.has(kind)) throw new Error("Only cancel and cancel_day are available in the web client");

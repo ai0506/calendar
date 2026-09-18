@@ -388,6 +388,18 @@ GET /api/course-schedule?from=2026-09-14&to=2026-09-20
 限定起止周。**被请假的课程直接从结果中消失**，不会返回 `status: "cancelled"` 的行。
 非 `active` 的 Course 或 Subject 一律不投影。
 
+#### `GET /api/course-catalog`
+
+返回全部 Course 的精简列表，供客户端按课程名做匹配（Reminders 的课程关联 Deadline 靠它）。
+
+```json
+[{ "id": "course-...", "name": "English Literature", "subject_id": "sub-...", "active": 1 }]
+```
+
+**包含 `active = 0` 的 Course**：历史课程仍要能被名称命中，并且仍允许被新的 Deadline 关联
+（见下方 `deadlines.course_id`）。按 `active` 降序、名称（不区分大小写）、`id` 排序，不分页。
+与其他 `/api/*` 一样需要认证；没有查询参数。
+
 #### `POST /api/course-overrides`
 
 Web 目前只允许两种请假操作：
@@ -407,6 +419,9 @@ Web 目前只允许两种请假操作：
 
 课程层完全独立：不写 `events` / `deadlines`，不产生提醒和通知，不进入 `/api/export`，
 也不进入私有 ICS 订阅源（公开的 `/schedule.ics` 是另一套静态课表数据，与本层无关）。
+
+唯一的反向引用是 `deadlines.course_id`（migration 0015）：Deadline 可以指向一门 Course 作为
+上下文，但课程层本身不因此产生任何事项，投影结果也不受 Deadline 影响。
 
 ---
 
@@ -496,6 +511,8 @@ DDL 是独立于 `events` 的截止事项。当前不支持重复 DDL、批量�
 - `category` 复用现有 `categories`；`color=null` 或 `color="default"` 表示跟随分类颜色。
 - `priority` 表示 DDL 重要程度，只允许 `high` / `default` / `low`，缺省为 `default`；不改变截止状态和截止时间。
 - 空字符串或全空白 `external_id` 会归一化为 `null`。
+- `course_id` 可空，指向 `courses.id`，表示这条 DDL 属于哪一门课（migration 0015）。它独立于
+  `subject_id` 与 Tag：Subject 是学科，Tag 是任务性质，Course 才是具体课程。
 
 ### `GET /api/deadlines`
 
@@ -509,13 +526,37 @@ DDL 是独立于 `events` 的截止事项。当前不支持重复 DDL、批量�
 
 服务端按存储值的日期部分查询，并按日历日期、全天优先、`julianday(due_time)`、`id` 排序。
 
+#### `course_id` 的合法性校验
+
+写入（POST / PUT / MCP create / MCP update）时，服务端按 merged 后的最终状态校验：
+
+```text
+course_id 为空                → 通过
+course_id 非空 + subject_id 空 → 400 "course_id requires subject_id"
+course_id 指向不存在的 Course  → 400 "course_id does not exist"
+Course.subject_id ≠ 本条 subject_id → 400 "course_id must belong to deadline subject_id"
+```
+
+**故意不校验 Course 的 `active` 与 Term 日期**：课程停用或学期结束之后，仍然可以新建或重新
+关联到这门 Course（这是已确认的产品语义，历史作业的归属不应随学期消失）。Academics 分类与
+`subject_id` 的关系由上面的 Subject 校验覆盖。
+
+PUT 用 merged state 校验，所以「只改 `subject_id`、不动 `course_id`」会因为残留的
+`course_id` 被拒绝（400），而不是写出一条 Course 与 Subject 不一致的行。要换学科就同时给出
+新的 `course_id` 或显式传 `course_id: null`。
+
+Course 的删除：**没有任何 API 能删除 Course**（Course 只由迁移写入）。外键未声明 `ON DELETE`，
+D1 又默认开启外键约束，因此手工在 D1 里删除一门仍被 Deadline 引用的 Course 会被
+`FOREIGN KEY constraint failed` 挡下（等效 RESTRICT），不会把 Deadline 悬空——已在本地 D1 实测。
+需要删课时先把引用它的 Deadline 的 `course_id` 置空。
+
 ### `POST /api/deadlines`
 
 成功返回 `201`。重复的 `(source, external_id)` 返回 `409 conflict`，包括原记录已软删除的情况。
 
 ### `GET/PUT/DELETE /api/deadlines/:id`
 
-GET 返回活动 DDL；PUT 只允许修改标题、描述、截止时间、全天标志、分类、颜色、分组和 `priority`；DELETE 使用软删除。 `source` 和 `external_id` 创建后不可修改。
+GET 返回活动 DDL；PUT 只允许修改标题、描述、截止时间、全天标志、分类、科目、`course_id`、颜色、分组和 `priority`；DELETE 使用软删除。 `source` 和 `external_id` 创建后不可修改。
 
 `priority` 只允许 `high`、`default`、`low`，缺省值为 `default`。
 
@@ -548,6 +589,11 @@ Remote MCP `/mcp` 提供与上述 REST API 对应的单次 DDL 工具：
 
 MCP 工具直接访问同一 D1 数据库，并复用 REST 的字段校验、优先级枚举、截止状态和软删除规则。
 
+`calendar_create_deadline` 与 `calendar_update`（`type="deadline"`）接受 `course_id`，校验规则与 REST 完全相同；
+`calendar_list_deadlines` / `calendar_get_deadline` / `calendar_complete_deadline` / `calendar_reopen_deadline`
+的返回对象都带 `course_id`。Deadline 的 Course 关联目前**只**通过认证后的 REST 与 MCP 暴露，
+Calendar Web / Android / macOS 客户端本期不展示也不编辑该字段。
+
 **Event 与 DDL 的工具划分**：`update` 与 `delete` 合并成一个工具、用 `type: "event" | "deadline"`
 区分——这两类操作在两种对象上形状相同（必填都只有 `id`），合并不丢任何 schema 信息。
 `create` **没有**合并：event 必填 `start_time`、deadline 必填 `due_time`，合并后 JSON Schema
@@ -555,7 +601,7 @@ MCP 工具直接访问同一 D1 数据库，并复用 REST 的字段校验、优
 代价大于收益。
 
 `calendar_update` 中带【仅 type=…】标注的字段只对该类型有效（`start_time` / `end_time` /
-`reminders` 仅 event，`due_time` / `priority` 仅 deadline），用错类型会在运行时被拒——
+`reminders` 仅 event，`due_time` / `priority` / `course_id` 仅 deadline），用错类型会在运行时被拒——
 JSON Schema 表达不了这种条件约束，而服务端也不校验未声明的参数，所以这层保护是显式写的。
 
 MCP 写工具**不提供 `color` 参数**：颜色由 category / subject 决定，见 §Category 与 Subject。

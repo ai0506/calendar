@@ -58,6 +58,7 @@ import {
   normalizeDeadlineInput,
   parseBooleanParam,
   rowToDeadline,
+  validateDeadlineCourse,
   validateDeadlineInput,
 } from "../_lib/deadlines.js";
 import {
@@ -157,6 +158,7 @@ const DEADLINE_WRITE_PROPERTIES = {
   all_day: { type: "boolean", description: "是否全天截止事项；全天时 due_time 必须为 YYYY-MM-DD" },
   category: { type: "string", description: CATEGORY_DESCRIPTION },
   subject_id: { type: ["string", "null"], description: SUBJECT_DESCRIPTION },
+  course_id: { type: ["string", "null"], description: "可选关联课程 id。必须存在，并与 Academics 及 subject_id 一致；inactive Course 也可关联。" },
   priority: { type: "string", enum: ["high", "default", "low"], description: "重要程度，默认 default" },
   source: { type: "string", description: "来源（创建时可选）" },
   external_id: { type: "string", description: "外部唯一标识（创建时可选）" },
@@ -187,6 +189,7 @@ const UPDATE_PROPERTIES = {
   all_day: { type: "boolean", description: "是否全天（可选）" },
   category: { type: "string", description: CATEGORY_DESCRIPTION },
   subject_id: { type: ["string", "null"], description: SUBJECT_DESCRIPTION },
+  course_id: { type: ["string", "null"], description: "【仅 type=deadline】可选关联课程 id；必须与 subject_id 一致。" },
   tag_ids: { type: "array", items: { type: "string" }, maxItems: 5, description: "可选，全局标签 ID；传空数组清空标签。" },
   start_time: { type: "string", description: "【仅 type=event】开始时间，ISO 8601 带时区偏移" },
   end_time: { type: "string", description: "【仅 type=event】结束时间，ISO 8601 带时区偏移" },
@@ -201,7 +204,7 @@ const UPDATE_PROPERTIES = {
 // 跨类型串味的参数在运行时挡掉：schema 表达不了「type=event 时不许出现 priority」，
 // 而服务端本来也不校验未声明参数，所以这层必须自己写。
 const EVENT_ONLY_FIELDS = ["start_time", "end_time", "reminders"];
-const DEADLINE_ONLY_FIELDS = ["due_time", "priority"];
+const DEADLINE_ONLY_FIELDS = ["due_time", "priority", "course_id"];
 
 const DEADLINE_OUTPUT_PROPERTIES = {
   id: { type: "string" },
@@ -211,6 +214,7 @@ const DEADLINE_OUTPUT_PROPERTIES = {
   all_day: { type: "boolean" },
   category: { type: ["string", "null"] },
   subject_id: { type: ["string", "null"] },
+  course_id: { type: ["string", "null"] },
   color: { type: ["string", "null"] },
   group_title: { type: ["string", "null"] },
   priority: { type: "string", enum: ["high", "default", "low"] },
@@ -612,11 +616,12 @@ async function runCreateDeadline(env, args = {}, clientName = null) {
   const message = validateDeadlineInput(args, true); if (message) throw new Error(message);
   const categoryMessage = await ensureCategoryExists(env, args.category); if (categoryMessage) throw new Error(categoryMessage);
   const subjectMessage = await validateCategorySubject(env, args.category, args.subject_id); if (subjectMessage) throw new Error(subjectMessage);
+  const courseMessage = await validateDeadlineCourse(env, args); if (courseMessage) throw new Error(courseMessage);
   if (args.tag_ids !== undefined) { const tagMessage = validateTagIds(args.tag_ids); if (tagMessage) throw new Error(tagMessage); const exists = await ensureTagIdsExist(env, args.tag_ids); if (exists) throw new Error(exists); }
   const input = normalizeDeadlineInput(args); const now = nowIso();
-  const deadline = { id: crypto.randomUUID(), title: input.title.trim(), description: input.description ?? null, due_time: input.due_time, all_day: input.all_day === 1 ? 1 : 0, category: input.category ?? null, subject_id: input.subject_id ?? null, color: input.color ?? null, group_title: input.group_title ?? null, priority: input.priority || "default", source: input.source || "mcp", external_id: input.external_id ?? null, created_at: now, updated_at: now, completed_at: null, deleted_at: null };
+  const deadline = { id: crypto.randomUUID(), title: input.title.trim(), description: input.description ?? null, due_time: input.due_time, all_day: input.all_day === 1 ? 1 : 0, category: input.category ?? null, subject_id: input.subject_id ?? null, course_id: input.course_id ?? null, color: input.color ?? null, group_title: input.group_title ?? null, priority: input.priority || "default", source: input.source || "mcp", external_id: input.external_id ?? null, created_at: now, updated_at: now, completed_at: null, deleted_at: null };
   const statements = [
-    env.DB.prepare("INSERT INTO deadlines (id, title, description, due_time, all_day, category, subject_id, color, group_title, priority, source, external_id, created_at, updated_at, completed_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    env.DB.prepare("INSERT INTO deadlines (id, title, description, due_time, all_day, category, subject_id, course_id, color, group_title, priority, source, external_id, created_at, updated_at, completed_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(...Object.values(deadline)),
     ...deadlineReminderStatements(env.DB, deadline),
     attributionStatement(env.DB, "deadlines", deadline.id, clientName),
@@ -651,6 +656,7 @@ async function runUpdateDeadline(env, args = {}, clientName = null) {
     if (mergedDeadline.subject_id !== existing.subject_id) input.subject_id = mergedDeadline.subject_id;
   }
   const subjectMessage = await validateCategorySubject(env, mergedDeadline.category, mergedDeadline.subject_id); if (subjectMessage) throw new Error(subjectMessage);
+  const courseMessage = await validateDeadlineCourse(env, mergedDeadline); if (courseMessage) throw new Error(courseMessage);
   const sets = []; const values = [];
   for (const field of deadlineFields()) { if (field === "source" || field === "external_id" || input[field] === undefined) continue; sets.push(`${field} = ?`); values.push(field === "all_day" ? input[field] : field === "title" ? input[field].trim() : input[field]); }
   const now = nowIso();

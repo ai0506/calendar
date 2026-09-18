@@ -38,7 +38,7 @@ npm run dev           # wrangler pages dev
 回归测试：
 
 ```bash
-npm run test:deadlines && npm run test:reminders && npm run test:series-patch && npm run test:tags && npm run test:ics && npm run test:oauth-scopes && npm run test:subjects
+npm run test:deadlines && npm run test:reminders && npm run test:series-patch && npm run test:tags && npm run test:ics && npm run test:oauth-scopes && npm run test:subjects && npm run test:deadline-course && npm run test:deadline-course-routes
 ```
 
 部署（需要 Cloudflare 授权，会同时发布前端与 Functions）：

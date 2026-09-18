@@ -6,6 +6,7 @@
 ## [Unreleased]
 
 ### Added
+- Deadline 与 Course 的关联：`deadlines.course_id`（migration 0015，可空外键）+ 认证后的 `GET /api/course-catalog`（含 inactive Course）。REST 的 Deadline POST/PUT 与 MCP 的 `calendar_create_deadline` / `calendar_update` 可读写该字段，列表、详情与完成 / 重开的返回对象都带上它。写入只校验 Course 存在与 Academics / Subject 一致，**不看 Course 是否 active、Term 是否结束**——历史作业的课程归属不应随学期消失。字段本期只面向 iPad 端 Reminders（设备端模型出草稿、用户确认后写入），Calendar Web / Android / macOS 不展示也不编辑。
 - 独立课程层（migration 0013）：Term / Course / CourseSlot / CourseOverride；主界面显示低优先级课程背景并提供单节/整天请假。课程沿用 Academics Subject 方案 G 配色，不进入 Event、Deadline、提醒、ICS 或导出。
 - 公开的技术说明页 `/docs`（`public/docs/`）与临时课表页 `/schedule/`（`public/schedule/`，数据源与公开订阅源 `/schedule.ics` 同一份 `course-data.js`），两者都不读 D1、不需要登录。
 - macOS 只读客户端 `mac-app/`（SwiftUI + XcodeGen）：Keychain 保存 Bearer Token，月 / 周 / 日三视图与当日详情，按 FRONTEND_SPEC 的定宽槽位与定高槽位实现，不含创建 / 编辑 / Widget。

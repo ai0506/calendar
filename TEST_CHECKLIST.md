@@ -185,6 +185,25 @@
 - [x] 表单内容左边缘与改动前一致（色块与 Title 输入框同为 447.5px @1280×800），未因修复而整体位移。
 - [x] 窄宽度（780×620，弹窗为 sheet 模式）下同样不裁切。
 
+## Deadline × Course 关联（migration 0015）
+
+后端已实现，客户端消费方是 Reminders；Calendar 自家前端本期不涉及，所以没有 Web 回归项。
+
+- [x] `npm run test:deadline-course`：库级校验（空值、类型、缺 subject、Course 不存在、Subject 不匹配、active / inactive Course、两侧空白规范化）。
+- [x] `npm run test:deadline-course-routes`：路由级（用 `tests/helpers/fake-d1.mjs` 的 D1 桩，不连真实数据库）
+  - [x] `GET /api/course-catalog` 返回 `id/name/subject_id/active` 四个字段，**包含 inactive Course**，active 排在前面。
+  - [x] `POST /api/deadlines` 带合法 `course_id` 返回 201 且落库；不带时落 `NULL`。
+  - [x] `POST` 关联 inactive Course 成功（已冻结的产品语义：停用 / 学期结束后仍可新建关联）。
+  - [x] `POST` 的四类拒绝：Course 不存在、Course 与 `subject_id` 不匹配、有 `course_id` 无 `subject_id`、普通分类（被 Category/Subject 校验先拦下），且均不写库。
+  - [x] `PUT` 改 `course_id`、清成 `null`、`GET /api/deadlines/:id` 回传该字段。
+  - [x] `PUT` 只改 `subject_id` 时按 merged state 拒绝残留的 `course_id`（400），原行不变；同时给出新 `course_id` 则通过。
+  - [x] MCP：`calendar_create_deadline` 带 `course_id` 成功并落库；`calendar_get_deadline` / `calendar_list_deadlines` / `calendar_complete_deadline` 回传 `course_id`；`calendar_update` 改 / 清 `course_id` 生效，Subject 不匹配被拒且不改库。
+  - [x] MCP 跨类型串味：`calendar_update` `type=event` 传 `course_id` → `course_id is not valid for type="event"`。
+- [x] 本地 D1 应用 migration 0015，`PRAGMA table_info(deadlines)` 中存在 `course_id`。
+- [ ] 生产 D1 迁移 0015 与部署后回归（未执行，待授权）。
+- [ ] 真实请求验收：带 Bearer Token 调 `GET /api/course-catalog` 与带 `course_id` 的 Deadline 写入（未执行，待授权）。
+- [x] Course 被物理删除时的行为：本地 D1 实测，删除仍被 Deadline 引用的 Course 返回 `FOREIGN KEY constraint failed`（等效 RESTRICT，不会留下悬空引用）；写入不存在的 `course_id` 也在 DB 层被同一约束挡下。没有任何 API 能删除 Course。
+
 ## MCP 工具合并（update / delete）
 
 - [x] `calendar_update` `type=event` 只改标题，`start_time` 保持不变

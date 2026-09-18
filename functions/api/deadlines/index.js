@@ -9,6 +9,7 @@ import {
   normalizeDeadlineInput,
   parseBooleanParam,
   rowToDeadline,
+  validateDeadlineCourse,
   validateDeadlineInput,
 } from "../../_lib/deadlines.js";
 import { nowIso } from "../../_lib/events.js";
@@ -69,6 +70,8 @@ export async function onRequestPost(context) {
   if (categoryMessage) return error("validation_error", categoryMessage, 400);
   const subjectMessage = await validateCategorySubject(env, body.category, body.subject_id);
   if (subjectMessage) return error("validation_error", subjectMessage, 400);
+  const courseMessage = await validateDeadlineCourse(env, body);
+  if (courseMessage) return error("validation_error", courseMessage, 400);
   const tagMessage = body.tag_ids === undefined ? null : validateTagIds(body.tag_ids);
   if (tagMessage) return error("validation_error", tagMessage, 400);
   if (body.tag_ids !== undefined) {
@@ -86,6 +89,7 @@ export async function onRequestPost(context) {
     all_day: input.all_day === 1 ? 1 : 0,
     category: input.category ?? null,
     subject_id: input.subject_id ?? null,
+    course_id: input.course_id ?? null,
     color: input.color ?? null,
     group_title: input.group_title ?? null,
     priority: input.priority || "default",
@@ -99,9 +103,9 @@ export async function onRequestPost(context) {
 
   try {
     const statements = [env.DB.prepare(`INSERT INTO deadlines
-        (id, title, description, due_time, all_day, category, subject_id, color, group_title,
+        (id, title, description, due_time, all_day, category, subject_id, course_id, color, group_title,
          priority, source, external_id, created_at, updated_at, completed_at, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind(...Object.values(deadline)), ...deadlineReminderStatements(env.DB, deadline)];
     if (body.tag_ids !== undefined) statements.push(...replaceTagStatements(env.DB, "deadline_tags", "deadline_id", deadline.id, body.tag_ids, now));
     await batch(env.DB, statements);

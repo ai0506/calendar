@@ -17,6 +17,8 @@
     "db:create": "wrangler d1 create calendar-db",
     "deploy": "wrangler pages deploy",
     "test:subjects": "node tests/subjects.test.mjs",
+    "test:deadline-course": "node tests/deadline-course.test.mjs",
+    "test:deadline-course-routes": "node tests/deadline-course-routes.test.mjs",
     "db:seed-fake": "node scripts/seed-fake.mjs > .seed-fake.generated.sql && wrangler d1 execute calendar-db --local --file=.seed-fake.generated.sql",
     "fixtures:check": "node scripts/seed-fake.mjs > /dev/null && echo 'fixtures/sample-workspace.json 一致性检查通过'"
   },

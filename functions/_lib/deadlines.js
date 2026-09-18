@@ -10,7 +10,7 @@ import {
 const COLOR_RE = /^#[0-9a-f]{6}$/i;
 const DEADLINE_PRIORITIES = new Set(["high", "default", "low"]);
 const DEADLINE_FIELDS = [
-  "title", "description", "due_time", "all_day", "category", "subject_id", "color", "group_title", "priority",
+  "title", "description", "due_time", "all_day", "category", "subject_id", "course_id", "color", "group_title", "priority",
 ];
 
 function isPresent(value) {
@@ -39,6 +39,7 @@ export function normalizeDeadlineInput(input) {
   if (normalized.group_title !== undefined) normalized.group_title = normalizeNullableText(normalized.group_title);
   if (normalized.category !== undefined) normalized.category = normalizeNullableText(normalized.category);
   if (normalized.subject_id !== undefined) normalized.subject_id = normalizeNullableText(normalized.subject_id);
+  if (normalized.course_id !== undefined) normalized.course_id = normalizeNullableText(normalized.course_id);
   if (normalized.priority !== undefined && normalized.priority !== null) {
     normalized.priority = String(normalized.priority).trim().toLowerCase();
   }
@@ -83,7 +84,7 @@ export function validateDeadlineInput(input, requireCore = true) {
     return "timed deadlines must use an ISO 8601 datetime with timezone";
   }
 
-  for (const field of ["description", "category", "subject_id", "group_title", "source", "external_id"]) {
+  for (const field of ["description", "category", "subject_id", "course_id", "group_title", "source", "external_id"]) {
     const message = validateOptionalString(input, field);
     if (message) return message;
   }
@@ -99,6 +100,23 @@ export function validateDeadlineInput(input, requireCore = true) {
   if (input.priority !== undefined && (typeof input.priority !== "string" || !DEADLINE_PRIORITIES.has(input.priority.trim().toLowerCase()))) {
     return "priority must be high, default, or low";
   }
+  return null;
+}
+
+// Course is historical context, not a lifecycle dependency. Active/term dates
+// deliberately do not participate: inactive Courses can still receive a new
+// confirmed Deadline when their Subject/category relationship is valid.
+export async function validateDeadlineCourse(env, deadline) {
+  const courseId = typeof deadline.course_id === "string" ? deadline.course_id.trim() : deadline.course_id;
+  if (courseId === undefined || courseId === null || courseId === "") return null;
+  if (typeof courseId !== "string") return "course_id must be a string or null";
+  const subjectId = typeof deadline.subject_id === "string" ? deadline.subject_id.trim() : deadline.subject_id;
+  if (typeof subjectId !== "string" || subjectId === "") {
+    return "course_id requires subject_id";
+  }
+  const course = await queryOne(env.DB, "SELECT id, subject_id FROM courses WHERE id = ?", [courseId]);
+  if (!course) return "course_id does not exist";
+  if (course.subject_id !== subjectId) return "course_id must belong to deadline subject_id";
   return null;
 }
 

@@ -69,8 +69,9 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 - 课程层：已建立独立的 Term / Course / CourseSlot / CourseOverride 数据层；Web 主界面读取课程投影并仅开放单节或整天请假，不写入 Event / Deadline。
 - 当前课表初始化：migration 0014 根据用户提供的 G11 个人课表写入 2026 秋季 Term（日期沿用既有 2026-08-31 至 2027-01-31 假设）；升旗、PE、语文、政治和经济归入 `Other`，英语分层课程归入 `English`。
 - 客户端：Android（Kotlin / Compose，含本地提醒与离线缓存）、macOS（`mac-app/`，SwiftUI，只读展示，无创建 / 编辑 / Widget）。
-- 生产：迁移 0001–0014 已全部应用到远程 D1；Web 与 Functions 已部署在 `calendar.ai0506.com`。
-- 自动化验证：`tests/` 下 Deadline、Reminder、系列 PATCH、Tags、ICS、OAuth scope、Subjects 七个 Node 用例通过；完整浏览器端到端与生产验收仍需人工执行。
+- Deadline × Course 关联：`deadlines.course_id`（migration 0015）+ `GET /api/course-catalog`，只通过认证后的 REST 与 MCP 暴露给 Reminders / AI 客户端，Calendar 自家前端本期不展示。
+- 生产：迁移 0001–0014 已全部应用到远程 D1；**迁移 0015 目前只应用在本地 D1，尚未上生产、未部署**；Web 与 Functions 已部署在 `calendar.ai0506.com`。
+- 自动化验证：`tests/` 下 Deadline、Reminder、系列 PATCH、Tags、ICS、OAuth scope、Subjects、Deadline×Course（库级 + 路由级）九个 Node 用例通过；完整浏览器端到端与生产验收仍需人工执行。
 - 已知问题：课程请假写入后无撤销入口（见 BUGS.md BUG-0006）；Android 真机验收与浏览器通知权限验收仍未完成。
 
 ## 4. 数据模型
@@ -184,6 +185,19 @@ Web 只提供 `cancel`（请假一节）和 `cancel_day`（请假当天全部课
 - 周 / 日视图：课程是时间轴上的浅色背景块，不参与 Event 的重叠分栏，事件永远盖在课程之上。
 - 当日详情（Inspector）：顺序固定为 Due soon → 当天事件 → Courses → Categories → Tags；
   课程列表是一行一节的紧凑行，放在定高滚动槽位里，请假入口不常驻（悬停才出现）。
+
+#### Deadline 的 Course 关联（migration 0015）
+
+`deadlines.course_id` 是可空的 `courses(id)` 外键，语义是「这条作业属于哪一门课」，
+与 `subject_id`（学科）和 Tag（任务性质）三者互不替代。
+
+- 写入时只校验：Course 存在、Deadline 属于 Academics 且有 `subject_id`、Course 与 Deadline 的
+  `subject_id` 一致。**不看 Course 的 `active`，也不看 Term 是否覆盖当前日期**——课程停用或学期
+  结束后仍可新建关联，历史作业的归属不应随学期消失。
+- 关联不改变课程投影，也不产生提醒 / ICS / 导出；方向是单向的 Deadline → Course。
+- 本期只有认证后的 REST 与 MCP 能读写该字段，客户端消费方是 iPad 端 Reminders
+  （设备端模型生成草稿、用户确认后才写入）；Calendar Web / Android / macOS 不展示不编辑。
+- `GET /api/course-catalog` 返回含 inactive 的全量 Course，供客户端做课程名匹配。
 
 ### 未来表（本阶段不创建）
 - `day_marks`（Days Matter 倒计时）

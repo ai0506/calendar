@@ -14,6 +14,24 @@ A PostToolUse hook auto-appends a generic `[ClaudeCode][...] file updated` line 
 
 When the user asks to check updates, read `updates.md` in the project root and summarize it.
 
+## Cross-project changes
+
+When a change also touches another project in this workspace (usually the iPad client
+`Reminders`, at `/Users/shuwenai/Desktop/Projects/Reminders`), log it in **both**
+`updates.md` files, with a prefix naming the direction:
+
+| Where | Prefix |
+|---|---|
+| this repo's `updates.md` | `[ClaudeCode to Reminders][YYMMDDHHMMSS]` |
+| `../Reminders/updates.md` | `[ClaudeCode from Calendar][YYMMDDHHmm]` |
+
+Keep each repo's existing timestamp precision: Calendar to the second (12 digits),
+Reminders to the minute (10 digits).
+
+That way the change log on either side shows that a change reached across repos,
+rather than showing half of it. Committing and pushing the other repo needs the
+user's go-ahead, same as this one.
+
 ## Project Docs (read before making changes)
 
 - `PROJECT_SPEC.md` — project requirements & architecture

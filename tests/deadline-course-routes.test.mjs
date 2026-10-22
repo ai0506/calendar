@@ -203,5 +203,18 @@ async function mcpCall(env, name, args) {
   assert.equal(event.isError, true);
   assert.match(event.text, /course_id is not valid for type="event"/);
 }
+{
+  // 已合并的旧工具名仍拒绝执行，但报错要指明新工具与 type（缓存旧 tools/list 的客户端靠它自行纠正）。
+  const { env, tables } = newEnv();
+  const before = JSON.stringify(tables.deadlines ?? []);
+  const old = await mcpCall(env, "calendar_update_deadline", { id: "x", priority: "default" });
+  assert.equal(old.isError, true);
+  assert.match(old.text, /calendar_update 并传 type="deadline"/);
+  const unprefixed = await mcpCall(env, "delete_event", { id: "x" });
+  assert.match(unprefixed.text, /calendar_delete 并传 type="event"/);
+  const unknown = await mcpCall(env, "calendar_nope", {});
+  assert.equal(unknown.text, "工具执行失败：未知工具：calendar_nope");
+  assert.equal(JSON.stringify(tables.deadlines ?? []), before);
+}
 
 console.log("deadline course route tests passed");

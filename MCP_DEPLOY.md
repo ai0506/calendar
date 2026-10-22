@@ -152,7 +152,7 @@ DDL 使用独立的 `due_time`、`priority` 和完成状态，不要当作普通
 ### 工具命名
 
 所有工具名都带 `calendar_` 前缀（如 `calendar_list_events`），用于和同时挂载的其他 MCP server（Cloudflare 等）区分。
-不带前缀的旧工具名仍被服务端接受并透明映射到新名，但 `tools/list` 只返回新名，新接入请一律使用带前缀的名字。
+不带前缀的旧工具名仍被服务端接受并透明映射到新名，但 `tools/list` 只返回新名，新接入请一律使用带前缀的名字。2026-09-08 合并掉的 `calendar_update_event` / `calendar_update_deadline` / `calendar_delete_event` / `calendar_delete_deadline` 不做映射、仍返回「未知工具」，但报错会指明改用 `calendar_update` / `calendar_delete` 并传哪个 `type`；客户端若仍列出这些旧名，说明它缓存了旧的 `tools/list`，刷新连接器即可。
 
 ### 查询事件
 

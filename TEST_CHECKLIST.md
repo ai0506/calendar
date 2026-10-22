@@ -215,5 +215,6 @@
 - [x] 缺 `type` 被拒；`type` 取非法值（如 `series`）被拒
 - [x] `calendar_delete` 两种 type 都返回 `{id, deleted:true}`
 - [x] 旧工具名 `calendar_delete_event` 等已不存在，调用返回「未知工具」
+- [x] 四个已合并的旧名（`calendar_update_event` / `calendar_update_deadline` / `calendar_delete_event` / `calendar_delete_deadline`，带或不带前缀）的「未知工具」报错指明改用 `calendar_update` / `calendar_delete` 及对应 `type`，且不写库（`npm run test:deadline-course-routes`）
 - [x] MCP 写工具不再暴露 `color`；不传 color 创建事件时 `color` 落 NULL、跟随科目色
 - [x] `calendar_update` 不再暴露 `source` / `external_id`（原 `calendar_update_deadline` 公布了但运行时必拒）

@@ -1379,6 +1379,15 @@ function resolveToolName(name) {
   return LEGACY_TOOL_NAMES.has(name) ? `calendar_${name}` : name;
 }
 
+// 2026-09-08 合并进 calendar_update / calendar_delete 的旧工具名。仍然拒绝执行，
+// 但缓存了旧 tools/list 的客户端会照旧调用 —— 报错里指明新工具和 type，让 AI 能自行改用。
+const MERGED_TOOL_NAMES = {
+  calendar_update_event: { tool: "calendar_update", type: "event" },
+  calendar_update_deadline: { tool: "calendar_update", type: "deadline" },
+  calendar_delete_event: { tool: "calendar_delete", type: "event" },
+  calendar_delete_deadline: { tool: "calendar_delete", type: "deadline" },
+};
+
 export function toolAllowedForScope(scope, name) {
   return scope !== READ_SCOPE || READ_ONLY_TOOLS.some((tool) => tool.name === resolveToolName(name));
 }
@@ -1404,7 +1413,11 @@ async function callTool(env, name, args, clientName) {
     case "calendar_skip_occurrence": return runSkipOccurrence(env, args, clientName);
     case "calendar_restore_occurrence": return runRestoreOccurrence(env, args, clientName);
     case "calendar_split_series": return runSplitSeries(env, args, clientName);
-    default: throw new Error(`未知工具：${name}`);
+    default: {
+      const merged = MERGED_TOOL_NAMES[name] ?? MERGED_TOOL_NAMES[`calendar_${name}`];
+      if (merged) throw new Error(`未知工具：${name}。该工具已合并为 ${merged.tool}，请改用 ${merged.tool} 并传 type="${merged.type}"；如客户端仍列出旧工具，请刷新连接器的工具列表。`);
+      throw new Error(`未知工具：${name}`);
+    }
   }
 }
 

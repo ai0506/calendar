@@ -11,6 +11,7 @@
     "test:series-patch": "node tests/series-patch.test.mjs",
     "test:tags": "node tests/tags.test.mjs",
     "test:ics": "node tests/ics.test.mjs",
+    "test:china-holidays": "node tests/china-holidays.test.mjs",
     "test:oauth-scopes": "node tests/oauth-scopes.test.mjs",
     "db:local": "wrangler d1 migrations apply calendar-db --local",
     "db:remote": "wrangler d1 migrations apply calendar-db --remote",

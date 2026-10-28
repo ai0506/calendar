@@ -1,4 +1,5 @@
 import { queryAll, queryOne, run } from "./db.js";
+import { isChinaHoliday } from "./china-holidays.js";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const KINDS = new Set(["cancel", "cancel_day"]);
@@ -48,7 +49,7 @@ export async function listCourseSchedule(env, from, to) {
     const cancelledDays = new Set(overrides.filter((item) => item.kind === "cancel_day").map((item) => item.effective_date));
     const cancelledSlots = new Set(overrides.filter((item) => item.kind === "cancel").map((item) => `${item.course_slot_id}|${item.effective_date}`));
     for (let date = from; date <= to; date = addDays(date, 1)) {
-      if (date < term.start_date || date > term.end_date || cancelledDays.has(date)) continue;
+      if (date < term.start_date || date > term.end_date || cancelledDays.has(date) || isChinaHoliday(date)) continue;
       const weekday = dateValue(date).getUTCDay() || 7;
       const week = weekNumber(term.start_date, date);
       for (const slot of slots) {

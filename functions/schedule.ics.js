@@ -12,6 +12,7 @@
 //     完全相同的字节，便于缓存，也避免客户端误判为「日历变了」。
 
 import { escapeText, foldLine } from "./_lib/ics.js";
+import { CHINA_HOLIDAY_DATES_2026 } from "./_lib/china-holidays.js";
 import { PERIODS, ICAL_DAYS, LESSONS, familyOf } from "../public/schedule/course-data.js";
 
 // ---- 学期范围：改课表 / 换学期时只改这三行 --------------------------------
@@ -51,6 +52,20 @@ function untilUtc(isoDate) {
   return d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 }
 
+function localDateTime(isoDate, time) {
+  return `${isoDate.replace(/-/g, "")}T${time.slice(0, 2)}${time.slice(3, 5)}00`;
+}
+
+function weekdayIndex(isoDate) {
+  return new Date(`${isoDate}T00:00:00Z`).getUTCDay() || 7;
+}
+
+function holidayExdates(dayIndex, startTime) {
+  return CHINA_HOLIDAY_DATES_2026
+    .filter((date) => date >= TERM_FIRST_MONDAY && date <= TERM_LAST_DAY && weekdayIndex(date) === dayIndex)
+    .map((date) => localDateTime(date, startTime));
+}
+
 function eventLines(cell, pi, di) {
   const period = PERIODS[pi];
   const date = addDays(TERM_FIRST_MONDAY, di);
@@ -76,12 +91,14 @@ function eventLines(cell, pi, di) {
     "TRANSP:OPAQUE",
     `X-AI0506-PERIOD:${pi + 1}`,
   ];
+  const exdates = holidayExdates(di + 1, period.s);
+  if (exdates.length) lines.push(`EXDATE;TZID=${TZID}:${exdates.join(",")}`);
   if (cell.room) lines.push(`LOCATION:${escapeText(cell.room)}`);
   lines.push("END:VEVENT");
   return lines;
 }
 
-function buildIcs(selfUrl) {
+export function buildIcs(selfUrl) {
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",

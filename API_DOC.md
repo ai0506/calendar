@@ -423,6 +423,35 @@ Web 目前只允许两种请假操作：
 唯一的反向引用是 `deadlines.course_id`（migration 0015）：Deadline 可以指向一门 Course 作为
 上下文，但课程层本身不因此产生任何事项，投影结果也不受 Deadline 影响。
 
+#### MCP `calendar_get_courses`（只读；2026-10-19 已部署）
+
+一个工具同时提供课程名称目录与未来课次查询。`calendar` 和 `calendar.read` scope 均可发现和调用；
+它读取与 Web 相同的 D1 课程投影，不读取公开静态课表，不包含 Event / Deadline。
+
+| 参数 | 说明 |
+|---|---|
+| `n` | 可选，整数 1–50，默认 1；连续两节相同课程分别计数 |
+| `course_id` | 可选，课程目录中的精确 ID；与 `course_name` 二选一 |
+| `course_name` | 可选，完整课程名，忽略大小写和两端空白；不存在或重名会报错，不做模糊匹配 |
+| `from` | 可选，带时区的 ISO 8601 日期时间，默认服务器当前时刻；只返回 `start_time >= from` 的课，不含已在进行中的课 |
+
+调用示例：`{}` 查询下一节；`{"n":3}` 查询接下来任意课程的三节；
+`{"course_name":"AS数学 L1A","n":2}` 查询这门课接下来的两次。
+不知道课程名称时先不传筛选，使用返回的目录，不要猜 ID 或简称。
+
+返回对象：
+
+- `courses`：与 `/api/course-catalog` 相同的完整目录（`id/name/subject_id/active`），含停用课程；目录存在不代表未来一定有课。
+- `selected_course_id`：筛选后的课程 ID，未筛选为 `null`。
+- `next_classes`：按开始时间排序的未来课次，字段与 `/api/course-schedule` 投影相同；`title` 为课程名，`start_time/end_time` 为上海时间 `+08:00`，另含日期、教室和课程/时段 ID。
+- `time_zone`：`Asia/Shanghai`；`from`：实际查询起点（UTC ISO 时间）。
+- `searched_through`：从起点所在上海日期起，共 366 个日期的最后一天（含当天），避免无限搜索。
+- `requested_count` / `returned_count`：请求与实际返回条数；放假、请假、单双周、课程/科目停用、学期边界均沿用现有投影规则。
+
+不足 n 节或没有有效课次时如实返回少量/空 `next_classes`；这只表示搜索窗口内没有更多课次，
+不代表以后永远无课。已知课程停用或学期结束后仍保留在目录中，其未来课次可以为空。
+输入类型/范围错误与底层数据库错误返回 MCP `isError`，不会伪装成无课；不改动数据或提醒。
+
 ---
 
 ### 导出 (Export) — ✅ 已实现 (Stage 6)

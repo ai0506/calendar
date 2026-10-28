@@ -4,6 +4,18 @@
 > 本地环境：`wrangler d1 migrations apply calendar-db --local` + `wrangler pages dev`。
 > 测试工具：PowerShell `Invoke-RestMethod` 或 `curl`。
 
+## MCP 课程查询（2026-10-18，本地新增）
+
+- [x] `npm run test:mcp-courses`：内存 SQLite 应用仓库真实迁移后，经 MCP JSON-RPC 入口查询；不是 Cloudflare D1/生产验收。
+- [x] 返回 13 门课程名称与 ID；默认 n=1、显式 n、完整课程名/ID 筛选、连续两节相同课程分别计数。
+- [x] 默认采用服务器当前时刻；等价 UTC/+08:00 起点一致，排除正在进行的课，恰好开课时包含；跨周末/假期自动找到后续课次。
+- [x] 单节/全天请假、Course/Subject 停用、单双周及起止周、未来学期、学期结束、空课程与 366 日期搜索边界。
+- [x] 名称不存在/重名、参数类型/范围、无时区/非法日期时间被拒；数据库失败返回工具错误，不伪装成无课。
+- [x] 只读 OAuth scope 可发现并调用第 8 个读工具；完整 scope 共 20 个工具；未认证 401，读 token 仍拒绝写工具。测试数据库在查询阶段启用 `query_only`。
+- [x] 现有 10 组 Node 回归测试通过，新增课程测试通过；相关 JS 语法检查与 Wrangler Pages Functions 构建通过。
+- [x] 2026-10-19 隔离快照部署至 `calendar/main`，deployment `c719b29f-e9b5-40f0-ac7c-c661c3fbc5f0`；正式域名与部署域名 `/api/auth/status` 200、未认证 MCP 401 且带 OAuth challenge、受保护课表 API 401、公开 ICS 200 且保留 40 条假期 EXDATE；正式域名前端关键资源与发布快照哈希一致。现有连接器分类查询成功；未改远端数据库。
+- [ ] 刷新 MCP 连接器工具列表，并用真实课表核对线上下一节/指定课程后 n 次（当前会话仍只有旧工具列表，本地测试密钥不适用于生产；未宣称新工具线上实际调用通过）。
+
 ## 认证 (Auth)
 - [x] 未认证访问 `GET /api/events` → 401
 - [x] `POST /api/auth/login` 正确密码 → 200 且返回 `Set-Cookie`
@@ -168,6 +180,8 @@
 - [x] 课程列表是定高滚动槽位：选中 7 节课的工作日与 0 节课的周末，Categories 标题和 agenda 列表的位置完全不变（实测都在 846px / 420px）。
 - [x] 无课的日子显示空态而不是整块消失。
 - [x] 周 / 日视图课程是浅色背景块，事件盖在其上，不参与重叠分栏。
+- [x] 2026 中国法定放假日期不返回课程，调休上班日不被误过滤（`npm run test:china-holidays`）。
+- [x] `/schedule.ics` 在 2026 假期重复课程上输出 `EXDATE`，且不为调休上班日输出排除项。
 - [ ] 请假后撤销（阻塞于 BUG-0006，暂无入口）。
 
 ### 自定义 tooltip（替代原生 title）

@@ -20,6 +20,7 @@ import { queryAll, queryOne, run, batch } from "../_lib/db.js";
 import { attachTagsToDeadlines, attachTagsToEvents, ensureTagIdsExist, replaceTagStatements, tagsForOwner, validateTagIds } from "../_lib/tags.js";
 import { ensureCategoryExists } from "../_lib/categories.js";
 import { listSubjects, subjectIdAfterCategoryChange, validateCategorySubject } from "../_lib/subjects.js";
+import { getUpcomingCourses } from "../_lib/course-schedule.js";
 import { safeEqual } from "../_lib/auth.js";
 import {
   verifyAccessToken,
@@ -235,6 +236,27 @@ const DEADLINE_OUTPUT_SCHEMA = {
 };
 
 const TOOLS = [
+  {
+    name: "calendar_get_courses",
+    description:
+      "【只读】获取用户的课程名称目录与接下来 n 节课的日期、开始/结束时间和教室，n 默认 1（最多 50）。" +
+      "不指定课程时返回接下来任意课程的 n 节；指定 course_id 或完整 course_name 时返回该课程下 n 次。" +
+      "不知道名称时先不传筛选，沿用返回的 courses 中的精确名称或 ID，不要猜测。" +
+      "courses 包含停用课程并用 active 标识；next_classes 只来自实际有效课表，排除已开始的课、假期与请假。" +
+      "从当前时刻（或 from）起搜索 366 个上海日期；不足 n 节时如实返回，searched_through 表示搜索边界，不代表之后永远无课。" +
+      "课表独立于普通 Event，查询上课安排应使用本工具。",
+    annotations: { readOnlyHint: true },
+    inputSchema: {
+      type: "object",
+      properties: {
+        n: { type: "integer", minimum: 1, maximum: 50, default: 1, description: "要返回的后续课次数，默认 1；连续两节相同课程分别计数。" },
+        course_id: { type: "string", description: "可选，courses 返回的精确课程 ID；与 course_name 二选一。" },
+        course_name: { type: "string", description: "可选，完整课程名称，忽略大小写和两端空白；重名时必须改用 course_id。" },
+        from: { type: "string", description: "可选，带时区的 ISO 8601 日期时间；默认服务器当前时刻。只返回 start_time >= 此时刻的课，不含已经进行中的课。" },
+      },
+      additionalProperties: false,
+    },
+  },
   {
     name: "calendar_list_events",
     description:
@@ -1394,6 +1416,7 @@ export function toolAllowedForScope(scope, name) {
 
 async function callTool(env, name, args, clientName) {
   switch (resolveToolName(name)) {
+    case "calendar_get_courses": return getUpcomingCourses(env, args);
     case "calendar_list_events": return runListEvents(env, args);
     case "calendar_list_categories": return runListCategories(env);
     case "calendar_list_subjects": return runListSubjects(env, args);
@@ -1449,7 +1472,8 @@ async function handleMessage(request, env, msg, auth) {
           instructions:
             "这是用户的主日历，也是默认应使用的个人日历。除非用户明确指定其他日历，否则读取和写入都使用这里。" +
             "调用工具前先读取 tools/list，不要猜工具名或参数名。calendar_list_events 未指定 from/to 时只返回当前上海时间起未来 30 天；" +
-            "需要历史或更远日期时必须显式提供时间范围。系列工具统一优先使用 series_id，并始终沿用 calendar_create_event_series 或 calendar_split_series 返回的精确 ID。" +
+            "需要历史或更远日期的事件时必须显式提供时间范围。课程课表独立于 Event，查询课程名称或下 n 节课请用 calendar_get_courses（n 默认 1，可指定课程名称或 ID）。" +
+            "系列工具统一优先使用 series_id，并始终沿用 calendar_create_event_series 或 calendar_split_series 返回的精确 ID。" +
             "删除系列前先确认目标 series_id；只取消一次时使用 calendar_skip_occurrence，不要删除整个系列。",
         });
       }

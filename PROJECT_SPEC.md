@@ -64,7 +64,7 @@ AI0506 Calendar 是一个**私人**日历系统，用于管理个人学习、科
 
 - 后端核心 API：已完成（认证、事件 CRUD、重复系列、分类、Subject、导入导出、Deadline、通知、课程投影）。
 - Web 前端：月 / 周 / 日三视图 + 竖屏布局，Event / Deadline 创建与编辑、详情、重复事件、标签、通知与提醒配置、ICS 订阅面板、课程层显示与请假。
-- MCP：19 个工具（`calendar_` 前缀），update / delete 已按 `type` 合并；Category / Subject 只读，不开放给 AI 写。
+- MCP：共 20 个工具（`calendar_` 前缀），update / delete 已按 `type` 合并；Category / Subject 只读，不开放给 AI 写。只读 `calendar_get_courses` 返回课程目录与下 n 节课（默认 1，可筛选课程），已于 2026-10-19 部署；当前会话工具发现列表仍待刷新，新工具线上实际调用尚未验收。
 - ICS：按「全部事件 / 每个分类 / 每个科目」提供私有订阅源，带 RFC 7986 `COLOR` 与 Apple 的 `X-APPLE-CALENDAR-COLOR`；另有公开的 `/schedule.ics` 课表源。
 - 课程层：已建立独立的 Term / Course / CourseSlot / CourseOverride 数据层；Web 主界面读取课程投影并仅开放单节或整天请假，不写入 Event / Deadline。
 - 当前课表初始化：migration 0014 根据用户提供的 G11 个人课表写入 2026 秋季 Term（日期沿用既有 2026-08-31 至 2027-01-31 假设）；升旗、PE、语文、政治和经济归入 `Other`，英语分层课程归入 `English`。

@@ -1,5 +1,6 @@
 import { queryAll, queryOne, run } from "./db.js";
 import { isChinaHoliday } from "./china-holidays.js";
+import { isDateTime } from "./recurrence.js";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const KINDS = new Set(["cancel", "cancel_day"]);
@@ -84,6 +85,57 @@ export async function listCourseCatalog(env) {
   return queryAll(env.DB, `SELECT id, name, subject_id, active
     FROM courses
     ORDER BY active DESC, name COLLATE NOCASE ASC, id ASC`);
+}
+
+// MCP reads the same D1 projection as Calendar Web, including leave/holiday rules.
+// A bounded horizon keeps an empty or sparse timetable from causing unbounded work.
+export async function getUpcomingCourses(env, args = {}, now = new Date()) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("arguments must be an object");
+  for (const key of Object.keys(args)) {
+    if (!["n", "course_id", "course_name", "from"].includes(key)) throw new Error(`Unknown argument: ${key}`);
+  }
+  const n = args.n === undefined ? 1 : args.n;
+  if (!Number.isInteger(n) || n < 1 || n > 50) throw new Error("n must be an integer between 1 and 50");
+  for (const key of ["course_id", "course_name"]) {
+    if (args[key] !== undefined && (typeof args[key] !== "string" || !args[key].trim())) {
+      throw new Error(`${key} must be a non-empty string`);
+    }
+  }
+  if (args.course_id !== undefined && args.course_name !== undefined) throw new Error("Use either course_id or course_name, not both");
+  if (args.from !== undefined && (!isDateTime(args.from) || Number(args.from.slice(11, 13)) > 23 || !Number.isFinite(Date.parse(args.from)))) {
+    throw new Error("from must be a valid ISO 8601 datetime with a timezone");
+  }
+  const reference = args.from === undefined ? now : new Date(args.from);
+  const instant = reference.getTime();
+  // China course slots use +08:00; never derive the date from the host timezone.
+  const start = new Date(instant + 8 * 3600000).toISOString().slice(0, 10);
+  const end = addDays(start, 365);
+  if (!DATE_RE.test(start) || !DATE_RE.test(end)) throw new Error("from is outside the supported date range");
+  const courses = await listCourseCatalog(env);
+  let selected = null;
+  if (args.course_id !== undefined) {
+    selected = courses.find((course) => course.id === args.course_id.trim());
+    if (!selected) throw new Error("course_id does not exist; use an id from courses");
+  } else if (args.course_name !== undefined) {
+    const name = args.course_name.trim().toLowerCase();
+    const matches = courses.filter((course) => course.name.toLowerCase() === name);
+    if (!matches.length) throw new Error("course_name does not match a full course name; omit it to list courses first");
+    if (matches.length > 1) throw new Error(`course_name is ambiguous; use course_id: ${matches.map((course) => course.id).join(", ")}`);
+    selected = matches[0];
+  }
+  const schedule = await listCourseSchedule(env, start, end);
+  const nextClasses = schedule.filter((row) => Date.parse(row.start_time) >= instant &&
+    (!selected || row.course_id === selected.id)).slice(0, n);
+  return {
+    courses,
+    selected_course_id: selected?.id ?? null,
+    time_zone: "Asia/Shanghai",
+    from: reference.toISOString(),
+    searched_through: end,
+    requested_count: n,
+    returned_count: nextClasses.length,
+    next_classes: nextClasses,
+  };
 }
 
 export async function createCourseLeave(env, body) {

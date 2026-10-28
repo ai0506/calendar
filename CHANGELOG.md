@@ -6,6 +6,7 @@
 ## [Unreleased]
 
 ### Added
+- 只读 MCP `calendar_get_courses`（2026-10-19 已部署）：返回课程名称目录，以及从当前时刻或指定 `from` 起的下 n 节课（默认 1，最多 50）；支持按课程 ID 或完整名称查询该课的下 n 次。复用主日历的 D1 课程投影、假期与请假过滤；搜索 366 个上海日期并返回搜索边界和实际条数，不足时不编造结果。
 - Deadline 与 Course 的关联：`deadlines.course_id`（migration 0015，可空外键）+ 认证后的 `GET /api/course-catalog`（含 inactive Course）。REST 的 Deadline POST/PUT 与 MCP 的 `calendar_create_deadline` / `calendar_update` 可读写该字段，列表、详情与完成 / 重开的返回对象都带上它。写入只校验 Course 存在与 Academics / Subject 一致，**不看 Course 是否 active、Term 是否结束**——历史作业的课程归属不应随学期消失。字段本期只面向 iPad 端 Reminders（设备端模型出草稿、用户确认后写入），Calendar Web / Android / macOS 不展示也不编辑。
 - 独立课程层（migration 0013）：Term / Course / CourseSlot / CourseOverride；主界面显示低优先级课程背景并提供单节/整天请假。课程沿用 Academics Subject 方案 G 配色，不进入 Event、Deadline、提醒、ICS 或导出。
 - 公开的技术说明页 `/docs`（`public/docs/`）与临时课表页 `/schedule/`（`public/schedule/`，数据源与公开订阅源 `/schedule.ics` 同一份 `course-data.js`），两者都不读 D1、不需要登录。
@@ -17,6 +18,7 @@
 - Web notification center upgrade: historical unread items no longer replay on login, browser-alert permission is explicit, notification rows open their Event/Deadline, scheduled reminder time is shown, and stale reminder backlogs are suppressed.
 
 ### Changed
+- 按国务院办公厅公布的 2026 年放假日期过滤课程：主 Calendar 的课程投影在元旦、春节、清明、劳动节、端午、中秋、国庆假期不返回；公开 `/schedule.ics` 为重复课程加入对应 `EXDATE`。调休上班日不屏蔽课程。
 - 课程在前端降级为低优先级图层，不再与 Event / Deadline 争版面：月视图的课程色条画在日期格顶部，不占用 chip 名额也不计入「+N more」；竖屏的课程从圆点改成圆点下方单独一排细色条；当日详情的顺序固定为 Due soon → 当天事件 → Courses → Categories → Tags，课程改成一行一节的紧凑行 + 定高滚动槽位，请假入口悬停才出现。无课的日子渲染空态而不是整块消失，保证下方控件位置不随课程数变化（FRONTEND_SPEC §2）。
 - 全站用自定义 tooltip（`[data-tip]` + 挂在 body 上的固定层）替换浏览器原生 `title`：原生要悬停约 1 秒才弹出、样式不可控，而且会被 `overflow:hidden` 的祖先（月视图格子、chip）连内容一起裁掉。新实现 80ms 出现、位置自动翻转与夹取、滚动 / 点击 / 按键即消失，输入框获得焦点时不弹，触屏设备不绑定。
 - 颜色语义改为「跟随分类 / 科目」：写入路径不再把当时的分类色快照进事项的 `color`，优先级为 事项显式颜色 > Subject 颜色 > Category 颜色。迁移 0012 会把历史数据里等于所属分类色的 `color` 归一化成 `NULL`（原值保存在 `migration_0012_backup`，回滚脚本见 `migrations/README_rollback_0012.md`）。此前 Web 与 MCP 都会把分类色写死进每一行，导致改分类配色对旧数据不生效。

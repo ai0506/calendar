@@ -41,6 +41,25 @@ user's go-ahead, same as this one.
 - `CHANGELOG.md` — released version changes
 - `TEST_CHECKLIST.md` — test items
 - `updates.md` — AI agent change log
+- `lessons.md` — general engineering lessons abstracted from this project's real incidents
+
+## `lessons.md` (engineering lessons)
+
+`updates.md` records *what changed this time*; `lessons.md` records *the general principle
+abstracted from it* — the layer that can be carried to another project. The two layers must
+not restate each other.
+
+- Read `lessons.md` before designing anything non-trivial (schema migration, partial-update
+  semantics, auth/scope boundaries, MCP tool surface, deployment order, notification
+  scheduling). Many of its rules already cover the mistake you are about to repeat.
+- After a change, if it exposed a **general** problem (another project would hit it too),
+  append one entry to `lessons.md` (format at the end of that file) and keep the high-level
+  principle list at the end of the file in sync.
+- If the problem only happens once and depends heavily on this repo's details, leave it in
+  the Development Rules below instead — don't inflate `lessons.md`.
+- The iPad client `Reminders` keeps its own `lessons.md` with the same structure. A
+  cross-repo change does not automatically get an entry on both sides; each repo decides
+  on its own.
 
 ## `production/` Folder
 

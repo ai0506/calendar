@@ -37,6 +37,8 @@ npm run dev           # wrangler pages dev
 
 回归测试：
 
+课程 MCP 新增用例：`npm run test:mcp-courses`（Node >= 22.13，内存 SQLite + 真实迁移；不连接用户数据库）。
+
 ```bash
 npm run test:deadlines && npm run test:reminders && npm run test:series-patch && npm run test:tags && npm run test:ics && npm run test:oauth-scopes && npm run test:subjects && npm run test:deadline-course && npm run test:deadline-course-routes
 ```
@@ -57,3 +59,4 @@ npm run deploy
 - `TEST_CHECKLIST.md` — 测试清单
 - `HANDOFF.md` / `MCP_DEPLOY.md` / `DEPLOY_CHECKLIST.md` — 交接与部署
 - `updates.md` — AI agent 变更流水
+- `lessons.md` — 从真实事故抽象出的通用工程经验

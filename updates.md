@@ -1,3 +1,4 @@
+[Codex][261031131632] Documented Cloud Agent local setup in AGENTS.md: npm ci, boot-time local .dev.vars, wrangler pages dev on port 8788, and a warning not to deploy or apply remote D1 migrations.
 [Codex][260712002611] Fixed MCP and REST recurring-series partial-update merging by sharing a stored-row merge helper; omitted fields now retain category, color, metadata, and recurrence values, null remains an explicit clear, malformed weekdays JSON is safe, and MCP series updates now validate temporal ordering. Added regression tests and checklist coverage.
 [ClaudeCode][260710134517] 初始化 Phase 1 项目文档：创建 PROJECT_SPEC.md、API_DOC.md、BUGS.md、CHANGELOG.md、TEST_CHECKLIST.md、updates.md（未写后端代码）
 [ClaudeCode][260710134736] 创建项目级 CLAUDE.md，写入 Update Logging 规则、项目文档清单与开发规则

@@ -48,3 +48,13 @@ This folder is listed in `.gitignore` and has no git history. Never use `git dif
 - Long-term maintenance project: small, targeted changes; do not rewrite without reason; do not touch unrelated code; understand existing structure first; fix root causes.
 - Never hardcode passwords / API keys; never commit `.env` / `.dev.vars`; do not casually change DB schema or API format.
 - Prefer simple, maintainable, clear solutions. No over-engineering, no premature optimization, no unnecessary dependencies.
+
+## Cursor Cloud specific instructions
+
+Local development does not need Cloudflare credentials or production secrets.
+
+- Install with `npm ci`. Node 22 is already available; `node:sqlite` tests need Node >= 22.13.
+- On boot, start creates `.dev.vars` only when that file is missing, using local random values. It applies local D1 migrations with `CI=1 npx wrangler d1 migrations apply calendar-db --local`, then serves `npx wrangler pages dev --ip 0.0.0.0 --port 8788`.
+- Open http://127.0.0.1:8788/ and sign in with `PASSWORD` from `.dev.vars`. `API_TOKEN` in the same file is the bearer token.
+- Do not run `npm run deploy` or `npm run db:remote`. Those talk to the production Cloudflare project.
+- Regression checks are the `npm run test:*` scripts in `package.json`, plus `npm run fixtures:check`.
